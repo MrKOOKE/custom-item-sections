@@ -1,0 +1,14 @@
+{
+  "CUSTOM_SECTIONS": {
+    "Section": "Section",
+    "SectionPlaceholder": "e.g., Food, Tools, Magic Items",
+    "ConfigureTitle": "Configure Custom Sections",
+    "ConfigureHint": "Items with custom sections will automatically appear in their respective categories in the inventory. To assign a section to an item, edit the item and enter a section name in the Details tab.",
+    "Settings": {
+      "EnableCustomSections": {
+        "Name": "Enable Custom Item Sections",
+        "Hint": "Allow items to be organized into custom sections in character sheets"
+      }
+    }
+  }
+} 

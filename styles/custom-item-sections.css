@@ -1,0 +1,6 @@
+/* Стили для модуля Custom Item Sections */
+
+/* Стиль для поля Section в листе предмета */
+.dnd5e.sheet.item .tab.details .form-group input[name*="custom-item-sections"] {
+  width: 100%;
+} 

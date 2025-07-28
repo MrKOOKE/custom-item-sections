@@ -1,0 +1,36 @@
+{
+  "id": "custom-item-sections",
+  "title": "Custom Item Sections for D&D 5e",
+  "description": "Добавляет возможность создания кастомных категорий для предметов в стандартном листе персонажа D&D 5e",
+  "version": "1.0.0",
+  "compatibility": {
+    "minimum": "12",
+    "verified": "12",
+    "maximum": "12"
+  },
+  "authors": [{
+    "name": "Custom Module Developer"
+  }],
+  "esmodules": ["scripts/custom-item-sections.js"],
+  "styles": ["styles/custom-item-sections.css"],
+  "languages": [
+    {
+      "lang": "en",
+      "name": "English",
+      "path": "lang/en.json"
+    },
+    {
+      "lang": "ru",
+      "name": "Русский",
+      "path": "lang/ru.json"
+    }
+  ],
+  "systems": [
+    {
+      "id": "dnd5e",
+      "manifest": "https://raw.githubusercontent.com/foundryvtt/dnd5e/master/system.json"
+    }
+  ],
+  "manifest": "https://raw.githubusercontent.com/yourrepo/custom-item-sections/main/module.json",
+  "download": "https://github.com/yourrepo/custom-item-sections/archive/refs/heads/main.zip"
+} 
