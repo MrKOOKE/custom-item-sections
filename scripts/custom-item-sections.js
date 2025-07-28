@@ -156,8 +156,11 @@ function addCustomSectionsToDOM(app, html, data) {
     });
   });
   
-  // Создаем и добавляем кастомные секции
-  customSections.forEach((items, sectionName) => {
+  // Сортируем секции по алфавиту и создаем их
+  const sortedSectionNames = Array.from(customSections.keys()).sort();
+  
+  sortedSectionNames.forEach(sectionName => {
+    const items = customSections.get(sectionName);
     console.log(`${MODULE_ID} | Creating custom section "${sectionName}" with ${items.length} items`);
     
     const sectionHtml = createCustomSection(sectionName, items, app, data);
