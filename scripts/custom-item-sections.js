@@ -92,6 +92,29 @@ Hooks.on('renderActorSheet5eNPC', (app, html, data) => {
   processCustomSections(app, html, data);
 });
 
+// Функция определения вкладки для предмета
+function getItemTab(item) {
+  // Определяем вкладку на основе типа предмета
+  switch (item.type) {
+    case 'spell':
+      return 'spells';
+    case 'feat':
+    case 'race':
+    case 'background':
+    case 'class':
+    case 'subclass':
+      return 'features';
+    case 'weapon':
+    case 'equipment':
+    case 'consumable':
+    case 'tool':
+    case 'container':
+    case 'loot':
+    default:
+      return 'inventory';
+  }
+}
+
 // Функция обработки кастомных секций
 function processCustomSections(app, html, data) {
   // Проверяем, включен ли модуль
@@ -99,91 +122,153 @@ function processCustomSections(app, html, data) {
   
   console.log(`${MODULE_ID} | Processing custom sections for actor ${app.actor.name}`);
   console.log(`${MODULE_ID} | Sheet class: ${app.constructor.name}`);
-  console.log(`${MODULE_ID} | Data inventory sections:`, data.inventory?.length || 'no inventory');
   
-  // Добавляем кастомные секции в DOM
+  // Добавляем кастомные секции в DOM для каждой вкладки
   addCustomSectionsToDOM(app, html, data);
 }
 
 // Функция добавления кастомных секций в DOM
 function addCustomSectionsToDOM(app, html, data) {
-  // Находим контейнер инвентаря
-  const inventoryList = html.find('.items-list.inventory-list, .inventory-list');
-  if (!inventoryList.length) {
-    console.log(`${MODULE_ID} | No inventory list found`);
-    return;
-  }
+  // Группируем предметы по вкладкам и кастомным секциям
+  const tabSections = {
+    inventory: new Map(),
+    features: new Map(),
+    spells: new Map()
+  };
   
-  console.log(`${MODULE_ID} | Found inventory list`);
-  
-  // Проверяем, не добавляли ли мы уже кастомные секции
-  if (html.find('[data-custom-section]').length > 0) {
-    console.log(`${MODULE_ID} | Custom sections already exist, skipping`);
-    return;
-  }
-  
-  // Создаем Map для группировки предметов по кастомным секциям
-  const customSections = new Map();
-  
-  // Проходим по всем предметам актера и ищем те, у которых есть кастомная секция
+  // Проходим по всем предметам актера и группируем их
   app.actor.items.forEach(item => {
     const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
+    const itemTab = getItemTab(item);
     
     if (customSectionName && customSectionName.trim()) {
-      console.log(`${MODULE_ID} | Found item "${item.name}" with custom section "${customSectionName}"`);
+      console.log(`${MODULE_ID} | Found item "${item.name}" with custom section "${customSectionName}" in tab "${itemTab}"`);
       
-      if (!customSections.has(customSectionName)) {
-        customSections.set(customSectionName, []);
+      if (!tabSections[itemTab].has(customSectionName)) {
+        tabSections[itemTab].set(customSectionName, []);
       }
-      customSections.get(customSectionName).push(item);
+      tabSections[itemTab].get(customSectionName).push(item);
     }
   });
   
-  // Если нет кастомных секций, выходим
-  if (customSections.size === 0) {
-    console.log(`${MODULE_ID} | No custom sections found`);
-    return;
-  }
-  
-  // Удаляем предметы с кастомными секциями из стандартных секций
-  customSections.forEach((items, sectionName) => {
-    items.forEach(item => {
-      const itemElement = html.find(`[data-item-id="${item.id}"]`);
-      if (itemElement.length) {
-        console.log(`${MODULE_ID} | Removing item "${item.name}" from standard section`);
-        itemElement.remove();
+  // Обрабатываем каждую вкладку
+  Object.entries(tabSections).forEach(([tabName, customSections]) => {
+    if (customSections.size === 0) return;
+    
+    console.log(`${MODULE_ID} | Processing ${customSections.size} custom sections for tab "${tabName}"`);
+    
+    // Находим контейнер для соответствующей вкладки
+    const tabContainer = findTabContainer(html, tabName);
+    if (!tabContainer) {
+      console.log(`${MODULE_ID} | Tab container not found for "${tabName}"`);
+      return;
+    }
+    
+    // Удаляем предметы с кастомными секциями из стандартных секций
+    customSections.forEach((items, sectionName) => {
+      items.forEach(item => {
+        const itemElement = html.find(`[data-item-id="${item.id}"]`);
+        if (itemElement.length) {
+          console.log(`${MODULE_ID} | Removing item "${item.name}" from standard section in tab "${tabName}"`);
+          itemElement.remove();
+        }
+      });
+    });
+    
+    // Скрываем пустые стандартные секции
+    tabContainer.find('.items-section').each((index, element) => {
+      const section = $(element);
+      const itemList = section.find('.item-list li.item');
+      
+      // Если в секции нет предметов, скрываем её
+      if (itemList.length === 0) {
+        console.log(`${MODULE_ID} | Hiding empty section: ${section.find('.item-name').text().trim()}`);
+        section.hide();
       }
     });
-  });
-  
-  // Сортируем секции по алфавиту и создаем их
-  const sortedSectionNames = Array.from(customSections.keys()).sort();
-  
-  sortedSectionNames.forEach(sectionName => {
-    const items = customSections.get(sectionName);
-    console.log(`${MODULE_ID} | Creating custom section "${sectionName}" with ${items.length} items`);
     
-    const sectionHtml = createCustomSection(sectionName, items, app, data);
-    inventoryList.append(sectionHtml);
+    // Создаем кастомные секции
+    const sortedSectionNames = Array.from(customSections.keys()).sort();
+    
+    sortedSectionNames.forEach(sectionName => {
+      const items = customSections.get(sectionName);
+      console.log(`${MODULE_ID} | Creating custom section "${sectionName}" with ${items.length} items in tab "${tabName}"`);
+      
+      const sectionHtml = createCustomSection(sectionName, items, app, data, tabName);
+      tabContainer.append(sectionHtml);
+    });
   });
   
   // Добавляем обработчики событий
   attachCustomSectionEventHandlers(html, app);
 }
 
+// Функция поиска контейнера вкладки
+function findTabContainer(html, tabName) {
+  // Для новой версии листов (v2)
+  let container = html.find(`.tab.${tabName} .items-list`);
+  if (container.length) {
+    return container;
+  }
+  
+  // Для старой версии листов
+  container = html.find(`.tab.${tabName} .inventory-list`);
+  if (container.length) {
+    return container;
+  }
+  
+  // Альтернативный поиск
+  container = html.find(`[data-tab="${tabName}"] .items-list`);
+  if (container.length) {
+    return container;
+  }
+  
+  container = html.find(`[data-tab="${tabName}"] .inventory-list`);
+  if (container.length) {
+    return container;
+  }
+  
+  return null;
+}
+
 // Функция создания HTML для кастомной секции
-function createCustomSection(sectionName, items, app, data) {
-  // Создаем заголовок секции точно как в оригинале
-  const headerHtml = `
-    <div class="items-header header">
-      <h3 class="item-name">${sectionName}</h3>
-      <div class="item-header item-price">${game.i18n.localize("DND5E.Price")}</div>
-      <div class="item-header item-weight">${game.i18n.localize("DND5E.Weight")}</div>
-      <div class="item-header item-quantity">${game.i18n.localize("DND5E.Quantity")}</div>
-      <div class="item-header item-uses">${game.i18n.localize("DND5E.Charges")}</div>
-      <div class="item-header item-controls"></div>
-    </div>
-  `;
+function createCustomSection(sectionName, items, app, data, tabName) {
+  // Определяем структуру заголовка в зависимости от вкладки
+  let headerHtml = '';
+  
+  if (tabName === 'inventory') {
+    // Заголовок для инвентаря
+    headerHtml = `
+      <div class="items-header header">
+        <h3 class="item-name">${sectionName}</h3>
+        <div class="item-header item-price">${game.i18n.localize("DND5E.Price")}</div>
+        <div class="item-header item-weight">${game.i18n.localize("DND5E.Weight")}</div>
+        <div class="item-header item-quantity">${game.i18n.localize("DND5E.Quantity")}</div>
+        <div class="item-header item-uses">${game.i18n.localize("DND5E.Charges")}</div>
+        <div class="item-header item-controls"></div>
+      </div>
+    `;
+  } else if (tabName === 'features') {
+    // Заголовок для особенностей
+    headerHtml = `
+      <div class="items-header header">
+        <h3 class="item-name">${sectionName}</h3>
+        <div class="item-header item-uses">${game.i18n.localize("DND5E.Uses")}</div>
+        <div class="item-header item-action">${game.i18n.localize("DND5E.Usage")}</div>
+        <div class="item-header item-controls"></div>
+      </div>
+    `;
+  } else if (tabName === 'spells') {
+    // Заголовок для заклинаний
+    headerHtml = `
+      <div class="items-header header">
+        <h3 class="item-name">${sectionName}</h3>
+        <div class="item-header item-school">${game.i18n.localize("DND5E.SpellSchool")}</div>
+        <div class="item-header item-action">${game.i18n.localize("DND5E.Usage")}</div>
+        <div class="item-header item-controls"></div>
+      </div>
+    `;
+  }
   
   // Создаем HTML для предметов в правильном формате
   let itemsHtml = '';
@@ -198,117 +283,272 @@ function createCustomSection(sectionName, items, app, data) {
     const weight = item.system.weight || 0;
     const totalWeight = itemContext.totalWeight || weight;
     
-    // Создаем HTML для отдельного предмета в правильном формате
-    itemsHtml += `
-      <li class="item collapsible ${itemContext.isExpanded ? '' : 'collapsed'}" 
-          data-item-id="${item.id}" data-entry-id="${item.id}" 
-          data-item-name="${item.name}" data-item-sort="${item.sort || 0}"
-          data-ungrouped="all" data-grouped="${item.type}">
-        
-        <div class="item-row">
-          
-          <!-- Item Name -->
-          <div class="item-name item-action item-tooltip" role="button" data-action="use"
-               aria-label="${item.name}">
-            <img class="item-image gold-icon" src="${item.img}" alt="${item.name}">
-            <div class="name name-stacked">
-              <span class="title">${item.name}</span>
-              ${itemContext.subtitle ? `<span class="subtitle">${itemContext.subtitle}</span>` : ''}
-            </div>
-            <div class="tags">
-              ${item.labels?.properties?.map(prop => 
-                prop.icon ? `<span aria-label="${prop.label}"><dnd5e-icon src="${prop.icon}"></dnd5e-icon></span>` : ''
-              ).join('') || ''}
-            </div>
-          </div>
-          
-          <!-- Item Price -->
-          <div class="item-detail item-price ${price > 0 ? '' : 'empty'}">
-            ${price > 0 ? `${price}<i class="currency ${item.system.price.denomination || 'gp'}"></i>` : ''}
-          </div>
-          
-          <!-- Item Weight -->
-          <div class="item-detail item-weight ${totalWeight > 0 ? '' : 'empty'}">
-            ${totalWeight > 0 ? `<i class="fas fa-weight-hanging"></i> ${totalWeight}` : ''}
-          </div>
-          
-          <!-- Item Quantity -->
-          <div class="item-detail item-quantity">
-            <a class="adjustment-button" data-action="decrease" data-property="system.quantity"><i class="fas fa-minus"></i></a>
-            <input type="text" value="${quantity}" placeholder="0" data-dtype="Number"
-                   data-name="system.quantity" inputmode="numeric" pattern="[0-9+=\-]*" min="0">
-            <a class="adjustment-button" data-action="increase" data-property="system.quantity"><i class="fas fa-plus"></i></a>
-          </div>
-          
-          <!-- Item Uses -->
-          <div class="item-detail item-uses ${hasUses ? '' : 'empty'}">
-            ${hasUses ? `
-              <input type="text" value="${uses.value}" placeholder="0"
-                     data-dtype="Number" data-name="system.uses.value" inputmode="numeric"
-                     pattern="[0-9+=\-]*">
-              <span class="separator">/</span>
-              <span class="max">${uses.max}</span>
-            ` : ''}
-          </div>
-          
-          <!-- Item Controls -->
-          <div class="item-detail item-controls">
-            ${data.editable ? `
-              <a class="item-control item-action" data-action="edit" data-tooltip="DND5E.ItemEdit"
-                 aria-label="${game.i18n.localize("DND5E.ItemEdit")}">
-                <i class="fas fa-pen-to-square"></i>
-              </a>
-              <a class="item-control item-action" data-action="delete" data-tooltip="DND5E.ItemDelete"
-                 aria-label="${game.i18n.localize("DND5E.ItemDelete")}">
-                <i class="fas fa-trash"></i>
-              </a>
-            ` : data.owner ? `
-              ${itemContext.attunement?.applicable ? `
-                <a class="item-control item-action ${itemContext.attunement.cls}" data-action="attune" 
-                   data-tooltip="${itemContext.attunement.title}" aria-label="${game.i18n.localize(itemContext.attunement.title)}"
-                   aria-disabled="${itemContext.attunement.disabled}">
-                  <i class="fas fa-sun"></i>
-                </a>
-              ` : ''}
-              ${itemContext.equip?.applicable ? `
-                <a class="item-control item-action ${itemContext.equip.cls}" data-action="equip" 
-                   data-tooltip="${itemContext.equip.title}" aria-label="${game.i18n.localize(itemContext.equip.title)}"
-                   aria-disabled="${itemContext.equip.disabled}">
-                  <i class="fas fa-shield-halved"></i>
-                </a>
-              ` : ''}
-            ` : ''}
-            <a class="item-control interface-only" data-toggle-description
-               aria-label="${game.i18n.localize("DND5E.ToggleDescription")}">
-              <i class="fas fa-${itemContext.isExpanded ? 'compress' : 'expand'}"></i>
-            </a>
-            <a class="item-control interface-only" data-context-menu
-               aria-label="${game.i18n.localize("DND5E.AdditionalControls")}">
-              <i class="fas fa-ellipsis-vertical"></i>
-            </a>
-          </div>
-          
-        </div>
-        
-        <div class="item-description collapsible-content">
-          <div class="wrapper">
-            ${itemContext.isExpanded ? `<div class="item-summary">${itemContext.expanded || ''}</div>` : ''}
-          </div>
-        </div>
-        
-      </li>
-    `;
+    // Создаем HTML для отдельного предмета в зависимости от вкладки
+    if (tabName === 'inventory') {
+      itemsHtml += createInventoryItemHtml(item, itemContext, hasUses, quantity, price, totalWeight, data);
+    } else if (tabName === 'features') {
+      itemsHtml += createFeatureItemHtml(item, itemContext, hasUses, data);
+    } else if (tabName === 'spells') {
+      itemsHtml += createSpellItemHtml(item, itemContext, data);
+    }
   });
   
   // Возвращаем полный HTML секции
   return $(`
-    <div class="items-section card" data-custom-section="${sectionName}" data-type="custom">
+    <div class="items-section card" data-custom-section="${sectionName}" data-type="custom" data-tab="${tabName}">
       ${headerHtml}
       <ol class="item-list unlist">
         ${itemsHtml}
       </ol>
     </div>
   `);
+}
+
+// Функция создания HTML для предмета инвентаря
+function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, totalWeight, data) {
+  return `
+    <li class="item collapsible ${itemContext.isExpanded ? '' : 'collapsed'}" 
+        data-item-id="${item.id}" data-entry-id="${item.id}" 
+        data-item-name="${item.name}" data-item-sort="${item.sort || 0}"
+        data-ungrouped="all" data-grouped="${item.type}">
+      
+      <div class="item-row">
+        
+        <!-- Item Name -->
+        <div class="item-name item-action item-tooltip" role="button" data-action="use"
+             aria-label="${item.name}">
+          <img class="item-image gold-icon" src="${item.img}" alt="${item.name}">
+          <div class="name name-stacked">
+            <span class="title">${item.name}</span>
+            ${itemContext.subtitle ? `<span class="subtitle">${itemContext.subtitle}</span>` : ''}
+          </div>
+          <div class="tags">
+            ${item.labels?.properties?.map(prop => 
+              prop.icon ? `<span aria-label="${prop.label}"><dnd5e-icon src="${prop.icon}"></dnd5e-icon></span>` : ''
+            ).join('') || ''}
+          </div>
+        </div>
+        
+        <!-- Item Price -->
+        <div class="item-detail item-price ${price > 0 ? '' : 'empty'}">
+          ${price > 0 ? `${price}<i class="currency ${item.system.price.denomination || 'gp'}"></i>` : ''}
+        </div>
+        
+        <!-- Item Weight -->
+        <div class="item-detail item-weight ${totalWeight > 0 ? '' : 'empty'}">
+          ${totalWeight > 0 ? `<i class="fas fa-weight-hanging"></i> ${totalWeight}` : ''}
+        </div>
+        
+        <!-- Item Quantity -->
+        <div class="item-detail item-quantity">
+          <a class="adjustment-button" data-action="decrease" data-property="system.quantity"><i class="fas fa-minus"></i></a>
+          <input type="text" value="${quantity}" placeholder="0" data-dtype="Number"
+                 data-name="system.quantity" inputmode="numeric" pattern="[0-9+=\-]*" min="0">
+          <a class="adjustment-button" data-action="increase" data-property="system.quantity"><i class="fas fa-plus"></i></a>
+        </div>
+        
+        <!-- Item Uses -->
+        <div class="item-detail item-uses ${hasUses ? '' : 'empty'}">
+          ${hasUses ? `
+            <input type="text" value="${uses.value}" placeholder="0"
+                   data-dtype="Number" data-name="system.uses.value" inputmode="numeric"
+                   pattern="[0-9+=\-]*">
+            <span class="separator">/</span>
+            <span class="max">${uses.max}</span>
+          ` : ''}
+        </div>
+        
+        <!-- Item Controls -->
+        <div class="item-detail item-controls">
+          ${data.editable ? `
+            <a class="item-control item-action" data-action="edit" data-tooltip="DND5E.ItemEdit"
+               aria-label="${game.i18n.localize("DND5E.ItemEdit")}">
+              <i class="fas fa-pen-to-square"></i>
+            </a>
+            <a class="item-control item-action" data-action="delete" data-tooltip="DND5E.ItemDelete"
+               aria-label="${game.i18n.localize("DND5E.ItemDelete")}">
+              <i class="fas fa-trash"></i>
+            </a>
+          ` : data.owner ? `
+            ${itemContext.attunement?.applicable ? `
+              <a class="item-control item-action ${itemContext.attunement.cls}" data-action="attune" 
+                 data-tooltip="${itemContext.attunement.title}" aria-label="${game.i18n.localize(itemContext.attunement.title)}"
+                 aria-disabled="${itemContext.attunement.disabled}">
+                <i class="fas fa-sun"></i>
+              </a>
+            ` : ''}
+            ${itemContext.equip?.applicable ? `
+              <a class="item-control item-action ${itemContext.equip.cls}" data-action="equip" 
+                 data-tooltip="${itemContext.equip.title}" aria-label="${game.i18n.localize(itemContext.equip.title)}"
+                 aria-disabled="${itemContext.equip.disabled}">
+                <i class="fas fa-shield-halved"></i>
+              </a>
+            ` : ''}
+          ` : ''}
+          <a class="item-control interface-only" data-toggle-description
+             aria-label="${game.i18n.localize("DND5E.ToggleDescription")}">
+            <i class="fas fa-${itemContext.isExpanded ? 'compress' : 'expand'}"></i>
+          </a>
+          <a class="item-control interface-only" data-context-menu
+             aria-label="${game.i18n.localize("DND5E.AdditionalControls")}">
+            <i class="fas fa-ellipsis-vertical"></i>
+          </a>
+        </div>
+        
+      </div>
+      
+      <div class="item-description collapsible-content">
+        <div class="wrapper">
+          ${itemContext.isExpanded ? `<div class="item-summary">${itemContext.expanded || ''}</div>` : ''}
+        </div>
+      </div>
+      
+    </li>
+  `;
+}
+
+// Функция создания HTML для особенности
+function createFeatureItemHtml(item, itemContext, hasUses, data) {
+  return `
+    <li class="item collapsible ${itemContext.isExpanded ? '' : 'collapsed'}" 
+        data-item-id="${item.id}" data-entry-id="${item.id}" 
+        data-item-name="${item.name}" data-item-sort="${item.sort || 0}"
+        data-grouped="${itemContext.group || 'feat'}" data-ungrouped="${itemContext.ungroup || 'feat'}">
+      
+      <div class="item-row">
+        
+        <!-- Item Name -->
+        <div class="item-name item-action item-tooltip" role="button" data-action="use"
+             aria-label="${item.name}">
+          <img class="item-image gold-icon" src="${item.img}" alt="${item.name}">
+          <div class="name name-stacked">
+            <span class="title">${item.name}</span>
+            ${itemContext.subtitle ? `<span class="subtitle">${itemContext.subtitle}</span>` : ''}
+          </div>
+          <div class="tags">
+            ${item.labels?.properties?.map(prop => 
+              prop.icon ? `<span aria-label="${prop.label}"><dnd5e-icon src="${prop.icon}"></dnd5e-icon></span>` : ''
+            ).join('') || ''}
+          </div>
+        </div>
+        
+        <!-- Item Uses -->
+        <div class="item-detail item-uses ${hasUses ? '' : 'empty'}">
+          ${hasUses ? `
+            <input type="text" value="${item.system.uses.value}" placeholder="0"
+                   data-dtype="Number" data-name="system.uses.value" inputmode="numeric"
+                   pattern="[0-9+=\-]*">
+            <span class="separator">/</span>
+            <span class="max">${item.system.uses.max}</span>
+          ` : ''}
+        </div>
+        
+        <!-- Item Action -->
+        <div class="item-detail item-action">
+          ${item.system.activation?.type ? item.labels.activation : ''}
+        </div>
+        
+        <!-- Item Controls -->
+        <div class="item-detail item-controls">
+          ${data.editable ? `
+            <a class="item-control item-action" data-action="edit" data-tooltip="DND5E.ItemEdit"
+               aria-label="${game.i18n.localize("DND5E.ItemEdit")}">
+              <i class="fas fa-pen-to-square"></i>
+            </a>
+            <a class="item-control item-action" data-action="delete" data-tooltip="DND5E.ItemDelete"
+               aria-label="${game.i18n.localize("DND5E.ItemDelete")}">
+              <i class="fas fa-trash"></i>
+            </a>
+          ` : ''}
+          <a class="item-control interface-only" data-toggle-description
+             aria-label="${game.i18n.localize("DND5E.ToggleDescription")}">
+            <i class="fas fa-${itemContext.isExpanded ? 'compress' : 'expand'}"></i>
+          </a>
+          <a class="item-control interface-only" data-context-menu
+             aria-label="${game.i18n.localize("DND5E.AdditionalControls")}">
+            <i class="fas fa-ellipsis-vertical"></i>
+          </a>
+        </div>
+        
+      </div>
+      
+      <div class="item-description collapsible-content">
+        <div class="wrapper">
+          ${itemContext.isExpanded ? `<div class="item-summary">${itemContext.expanded || ''}</div>` : ''}
+        </div>
+      </div>
+      
+    </li>
+  `;
+}
+
+// Функция создания HTML для заклинания
+function createSpellItemHtml(item, itemContext, data) {
+  return `
+    <li class="item collapsible ${itemContext.isExpanded ? '' : 'collapsed'}" 
+        data-item-id="${item.id}" data-entry-id="${item.id}" 
+        data-item-name="${item.name}" data-item-sort="${item.sort || 0}"
+        data-grouped="spell" data-ungrouped="spell">
+      
+      <div class="item-row">
+        
+        <!-- Item Name -->
+        <div class="item-name item-action item-tooltip" role="button" data-action="use"
+             aria-label="${item.name}">
+          <img class="item-image gold-icon" src="${item.img}" alt="${item.name}">
+          <div class="name name-stacked">
+            <span class="title">${item.name}</span>
+            ${itemContext.subtitle ? `<span class="subtitle">${itemContext.subtitle}</span>` : ''}
+          </div>
+          <div class="tags">
+            ${item.labels?.properties?.map(prop => 
+              prop.icon ? `<span aria-label="${prop.label}"><dnd5e-icon src="${prop.icon}"></dnd5e-icon></span>` : ''
+            ).join('') || ''}
+          </div>
+        </div>
+        
+        <!-- Spell School -->
+        <div class="item-detail item-school">
+          ${item.labels.school || ''}
+        </div>
+        
+        <!-- Item Action -->
+        <div class="item-detail item-action">
+          ${item.system.activation?.type ? item.labels.activation : ''}
+        </div>
+        
+        <!-- Item Controls -->
+        <div class="item-detail item-controls">
+          ${data.editable ? `
+            <a class="item-control item-action" data-action="edit" data-tooltip="DND5E.ItemEdit"
+               aria-label="${game.i18n.localize("DND5E.ItemEdit")}">
+              <i class="fas fa-pen-to-square"></i>
+            </a>
+            <a class="item-control item-action" data-action="delete" data-tooltip="DND5E.ItemDelete"
+               aria-label="${game.i18n.localize("DND5E.ItemDelete")}">
+              <i class="fas fa-trash"></i>
+            </a>
+          ` : ''}
+          <a class="item-control interface-only" data-toggle-description
+             aria-label="${game.i18n.localize("DND5E.ToggleDescription")}">
+            <i class="fas fa-${itemContext.isExpanded ? 'compress' : 'expand'}"></i>
+          </a>
+          <a class="item-control interface-only" data-context-menu
+             aria-label="${game.i18n.localize("DND5E.AdditionalControls")}">
+            <i class="fas fa-ellipsis-vertical"></i>
+          </a>
+        </div>
+        
+      </div>
+      
+      <div class="item-description collapsible-content">
+        <div class="wrapper">
+          ${itemContext.isExpanded ? `<div class="item-summary">${itemContext.expanded || ''}</div>` : ''}
+        </div>
+      </div>
+      
+    </li>
+  `;
 }
 
 // Функция добавления обработчиков событий для кастомных секций
@@ -410,11 +650,76 @@ function attachCustomSectionEventHandlers(html, app) {
       icon.addClass(isExpanded ? 'fa-compress' : 'fa-expand');
     }
   });
+
+  // Добавляем обработчики перетаскивания для элементов в кастомных секциях
+  html.find('[data-custom-section] .item[data-item-id]').each((index, element) => {
+    const $element = $(element);
+    const itemId = $element.data('item-id');
+    const item = app.actor.items.get(itemId);
+    
+    if (item) {
+      // Делаем элемент перетаскиваемым
+      element.draggable = true;
+      
+      // Добавляем обработчик dragstart
+      element.addEventListener('dragstart', (event) => {
+        console.log(`${MODULE_ID} | Starting drag for item ${item.name}`);
+        
+        // Создаем данные для перетаскивания
+        const dragData = {
+          type: 'Item',
+          id: item.id,
+          uuid: item.uuid,
+          actorId: app.actor.id,
+          actorUuid: app.actor.uuid
+        };
+        
+        // Устанавливаем данные перетаскивания
+        event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+        event.dataTransfer.effectAllowed = 'copy';
+        
+        // Добавляем класс для визуальной обратной связи
+        $element.addClass('dragging');
+      });
+      
+      // Добавляем обработчик dragend
+      element.addEventListener('dragend', (event) => {
+        console.log(`${MODULE_ID} | Ending drag for item ${item.name}`);
+        $element.removeClass('dragging');
+      });
+      
+      // Добавляем обработчик dragover для визуальной обратной связи
+      element.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'copy';
+      });
+      
+      // Добавляем обработчик drop для приема других предметов
+      element.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        
+        try {
+          const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
+          
+          if (dropData.type === 'Item' && dropData.id !== item.id) {
+            const droppedItem = app.actor.items.get(dropData.id);
+            if (droppedItem) {
+              console.log(`${MODULE_ID} | Dropped item ${droppedItem.name} onto ${item.name}`);
+              
+              // Здесь можно добавить логику для обработки перетаскивания предметов
+              // Например, перемещение в контейнер, объединение стаков и т.д.
+              
+              // Пока просто показываем уведомление
+              ui.notifications.info(`Перетащили ${droppedItem.name} на ${item.name}`);
+            }
+          }
+        } catch (error) {
+          console.error(`${MODULE_ID} | Error processing drop:`, error);
+        }
+      });
+    }
+  });
 }
-
-
-
-
 
 // Логирование для отладки
 Hooks.once('ready', () => {
