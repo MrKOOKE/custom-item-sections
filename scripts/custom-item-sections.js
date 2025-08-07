@@ -10,7 +10,51 @@ Hooks.once('init', () => {
   
   // Регистрируем настройки, если необходимо
   registerSettings();
+  
+  // Добавляем глобальные обработчики для блокировки редактирования количества
+  setupInventoryControlHandlers();
 });
+
+// Функция настройки обработчиков контроля инвентаря
+function setupInventoryControlHandlers() {
+  // Добавляем обработчик события click для перехвата кликов по кнопкам + и - в кастомных секциях
+  $(document).on("click", "[data-custom-section] .adjustment-button", function(event) {
+    // Пропускаем обработку для GM
+    if (game.user.isGM) return;
+    
+    // Предотвращаем стандартное поведение
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Уведомляем пользователя
+    ui.notifications.warn("Только GM может изменять количество предметов");
+    
+    return false;
+  });
+  
+  // Добавляем обработчик события change для полей ввода количества в кастомных секциях
+  $(document).on("change", "[data-custom-section] input[data-name='system.quantity']", function(event) {
+    // Пропускаем обработку для GM
+    if (game.user.isGM) return;
+    
+    // Получаем исходное значение из атрибута data-prev-value
+    const prevValue = $(this).attr("data-prev-value");
+    
+    // Если предыдущее значение доступно, восстанавливаем его
+    if (prevValue !== undefined) {
+      $(this).val(prevValue);
+    }
+    
+    // Предотвращаем стандартное поведение
+    event.preventDefault();
+    event.stopPropagation();
+    
+    // Уведомляем пользователя
+    ui.notifications.warn("Только GM может изменять количество предметов");
+    
+    return false;
+  });
+}
 
 // Регистрация настроек модуля
 function registerSettings() {
@@ -115,6 +159,25 @@ function getItemTab(item) {
   }
 }
 
+// Функция применения tooltip'ов к элементам предметов (аналогично оригинальной системе D&D 5e)
+function applyItemTooltips(element, app) {
+  if ("tooltip" in element.dataset) return;
+  
+  const target = element.closest("[data-item-id]");
+  if (!target) return;
+  
+  const itemId = target.dataset.itemId;
+  const item = app.actor.items.get(itemId);
+  
+  if (!item) return;
+  
+  element.dataset.tooltip = `
+    <section class="loading" data-uuid="${item.uuid}"><i class="fas fa-spinner fa-spin-pulse"></i></section>
+  `;
+  element.dataset.tooltipClass = "dnd5e2 dnd5e-tooltip item-tooltip";
+  element.dataset.tooltipDirection ??= "LEFT";
+}
+
 // Функция обработки кастомных секций
 function processCustomSections(app, html, data) {
   // Проверяем, включен ли модуль
@@ -125,6 +188,40 @@ function processCustomSections(app, html, data) {
   
   // Добавляем кастомные секции в DOM для каждой вкладки
   addCustomSectionsToDOM(app, html, data);
+  
+  // Применяем tooltip'ы к элементам в кастомных секциях
+  html.find('[data-custom-section] .item-tooltip').each((index, element) => {
+    applyItemTooltips(element, app);
+  });
+  
+  // Применяем блокировки редактирования количества для не-GM пользователей
+  if (!game.user.isGM) {
+    applyQuantityRestrictions(html);
+  }
+}
+
+// Функция применения ограничений на редактирование количества
+function applyQuantityRestrictions(html) {
+  // Блокируем поля ввода количества в кастомных секциях
+  html.find('[data-custom-section] input[data-name="system.quantity"]').each(function() {
+    const input = $(this);
+    // Сохраняем исходное значение, если еще не сохранено
+    if (!input.attr('data-prev-value')) {
+      input.attr('data-prev-value', input.val());
+    }
+    // Делаем поле только для чтения
+    input.prop('readonly', true);
+    input.attr('title', 'Только GM может изменять количество предметов');
+  });
+  
+  // Блокируем кнопки увеличения/уменьшения количества в кастомных секциях
+  html.find('[data-custom-section] .adjustment-button').each(function() {
+    const button = $(this);
+    button.attr({
+      'disabled': 'disabled',
+      'title': 'Только GM может изменять количество предметов'
+    });
+  });
 }
 
 // Функция добавления кастомных секций в DOM
@@ -350,11 +447,11 @@ function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, to
         <!-- Item Uses -->
         <div class="item-detail item-uses ${hasUses ? '' : 'empty'}">
           ${hasUses ? `
-            <input type="text" value="${uses.value}" placeholder="0"
+            <input type="text" value="${item.system.uses.value}" placeholder="0"
                    data-dtype="Number" data-name="system.uses.value" inputmode="numeric"
                    pattern="[0-9+=\-]*">
             <span class="separator">/</span>
-            <span class="max">${uses.max}</span>
+            <span class="max">${item.system.uses.max}</span>
           ` : ''}
         </div>
         
@@ -553,8 +650,49 @@ function createSpellItemHtml(item, itemContext, data) {
 
 // Функция добавления обработчиков событий для кастомных секций
 function attachCustomSectionEventHandlers(html, app) {
-  // Обработчик для изменения количества
+  // Применяем tooltip'ы к элементам в кастомных секциях
+  html.find('[data-custom-section] .item-tooltip').each((index, element) => {
+    applyItemTooltips(element, app);
+  });
+  
+  // БЛОКИРОВКА РЕДАКТИРОВАНИЯ КОЛИЧЕСТВА ДЛЯ НЕ-GM ПОЛЬЗОВАТЕЛЕЙ
+  if (!game.user.isGM) {
+    // Блокируем поля ввода количества
+    html.find('[data-custom-section] input[data-name="system.quantity"]').each(function() {
+      const input = $(this);
+      // Сохраняем исходное значение
+      input.attr('data-prev-value', input.val());
+      // Делаем поле только для чтения
+      input.prop('readonly', true);
+      input.attr('title', 'Только GM может изменять количество предметов');
+    });
+    
+    // Блокируем кнопки увеличения/уменьшения количества
+    html.find('[data-custom-section] .adjustment-button').each(function() {
+      const button = $(this);
+      button.addClass('disabled-quantity-btn');
+      button.attr({
+        'disabled': 'disabled',
+        'title': 'Только GM может изменять количество предметов'
+      });
+    });
+  }
+  
+  // Обработчик для изменения количества (только для GM)
   html.find('[data-custom-section] input[data-name="system.quantity"]').change(async (event) => {
+    // Пропускаем обработку для не-GM пользователей
+    if (!game.user.isGM) {
+      const input = $(event.currentTarget);
+      const prevValue = input.attr('data-prev-value');
+      if (prevValue !== undefined) {
+        input.val(prevValue);
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      ui.notifications.warn("Только GM может изменять количество предметов");
+      return false;
+    }
+    
     const itemId = $(event.currentTarget).closest('.item').data('item-id');
     const value = Number(event.currentTarget.value);
     const item = app.actor.items.get(itemId);
@@ -575,8 +713,16 @@ function attachCustomSectionEventHandlers(html, app) {
     }
   });
   
-  // Обработчик для кнопок увеличения/уменьшения количества
+  // Обработчик для кнопок увеличения/уменьшения количества (только для GM)
   html.find('[data-custom-section] .adjustment-button').click(async (event) => {
+    // Пропускаем обработку для не-GM пользователей
+    if (!game.user.isGM) {
+      event.preventDefault();
+      event.stopPropagation();
+      ui.notifications.warn("Только GM может изменять количество предметов");
+      return false;
+    }
+    
     const action = $(event.currentTarget).data('action');
     const property = $(event.currentTarget).data('property');
     const itemId = $(event.currentTarget).closest('.item').data('item-id');

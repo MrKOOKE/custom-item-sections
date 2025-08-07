@@ -3,4 +3,30 @@
 /* Стиль для поля Section в листе предмета */
 .dnd5e.sheet.item .tab.details .form-group input[name*="custom-item-sections"] {
   width: 100%;
-} 
+}
+
+/* Курсор-рука для предметов в кастомных секциях (точно как в оригинальной системе D&D 5e) */
+[data-custom-section] .item-name.item-action.item-tooltip {
+  cursor: pointer;
+}
+
+[data-custom-section] .item-name.item-action.item-tooltip:hover .title {
+  text-shadow: 0 0 8px var(--color-shadow-primary);
+}
+
+[data-custom-section] .item-name.item-action.item-tooltip:hover .subtitle {
+  text-shadow: 0 0 8px var(--color-shadow-primary);
+}
+
+/* Анимация для плавного перехода (точно как в оригинальной системе D&D 5e) */
+[data-custom-section] .item-name.item-action.item-tooltip .title,
+[data-custom-section] .item-name.item-action.item-tooltip .subtitle {
+  transition: text-shadow 250ms ease;
+}
+
+/* Отменяем стандартное затемнение браузера для заблокированных кнопок */
+[data-custom-section] .adjustment-button[disabled] {
+  opacity: 1 !important;
+  filter: none !important;
+}
+ 
