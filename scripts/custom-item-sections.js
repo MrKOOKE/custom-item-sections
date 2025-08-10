@@ -66,6 +66,16 @@ function registerSettings() {
     type: Boolean,
     default: true
   });
+
+  // Переключатель сетчатого вида инвентаря
+  game.settings.register(MODULE_ID, 'enableGridInventory', {
+    name: 'CUSTOM_SECTIONS.Settings.EnableGridInventory.Name',
+    hint: 'CUSTOM_SECTIONS.Settings.EnableGridInventory.Hint',
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: true
+  });
 }
 
 // Добавляем поле Section в листы предметов
@@ -198,6 +208,68 @@ function processCustomSections(app, html, data) {
   if (!game.user.isGM) {
     applyQuantityRestrictions(html);
   }
+
+  // Применяем сетчатый вид к стандартным секциям, если включено в настройках
+  applyGridInventory(app, html);
+}
+
+// Преобразуем стандартные секции dnd5e инвентаря в сетку (без названий), если включено
+function applyGridInventory(app, html) {
+  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
+  if (!gridOn) return;
+
+  // Ищем все стандартные секции инвентаря (кроме наших кастомных, у них есть data-custom-section)
+  const inventoryTabs = html.find('.tab.inventory');
+  if (!inventoryTabs.length) return;
+
+  // Преобразуем список предметов внутри каждой стандартной секции
+  inventoryTabs.find('.items-section:not([data-custom-section])').each((_, section) => {
+    const $section = $(section);
+
+    // Упростить шапку: оставить только заголовок
+    const header = $section.find('.items-header.header');
+    header.addClass('cis-grid-header');
+    header.children(':not(.item-name)').remove();
+    $section.addClass('cis-grid');
+
+    // Список элементов -> сетка
+    const list = $section.find('ol.item-list');
+    list.addClass('cis-grid-list');
+
+    // Превращаем каждый <li.item> в компактную плитку
+    list.children('li.item').each((_, li) => {
+      const $li = $(li);
+      if ($li.hasClass('cis-grid-item')) return; // уже обработан
+      const id = $li.data('itemId');
+      const name = $li.data('itemName') ?? '';
+      const img = $li.find('img, .item-image').first().attr('src');
+      // Количество
+      let qty = $li.find('[data-name="system.quantity"]').val();
+      qty = Number(qty ?? 0);
+
+      // Собираем новый контент
+      const tile = $(`<a class="cis-grid-tile item-action item-tooltip" role="button" data-action="use" aria-label="${name}"></a>`);
+      const image = $(`<img class="cis-grid-image" alt="${name}">`).attr('src', img);
+      tile.append(image);
+      if (qty > 1) tile.append(`<span class="cis-qty">${qty}</span>`);
+
+      // Очистить и применить классы
+      $li.attr('class', 'item cis-grid-item');
+      $li.empty().append(tile);
+      // Назначаем тултип для новой плитки
+      applyItemTooltips(tile[0], app);
+    });
+  });
+
+  // Навешиваем обработчик на использование предмета по клику по плитке для стандартных секций
+  inventoryTabs.off('click.cis-grid-use');
+  inventoryTabs.on('click.cis-grid-use', '.cis-grid-item .cis-grid-tile', async (event) => {
+    const li = event.currentTarget.closest('.item');
+    if (!li) return;
+    const itemId = li.dataset.itemId;
+    const item = app.actor.items.get(itemId);
+    if (item) await item.use();
+  });
 }
 
 // Функция применения ограничений на редактирование количества
@@ -238,7 +310,8 @@ function addCustomSectionsToDOM(app, html, data) {
     const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
     const itemTab = getItemTab(item);
     
-    if (customSectionName && customSectionName.trim()) {
+    // Проверяем, что customSectionName является строкой и не пустая после trim
+    if (customSectionName && typeof customSectionName === 'string' && customSectionName.trim()) {
       console.log(`${MODULE_ID} | Found item "${item.name}" with custom section "${customSectionName}" in tab "${itemTab}"`);
       
       if (!tabSections[itemTab].has(customSectionName)) {
@@ -332,19 +405,29 @@ function findTabContainer(html, tabName) {
 function createCustomSection(sectionName, items, app, data, tabName) {
   // Определяем структуру заголовка в зависимости от вкладки
   let headerHtml = '';
+  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
   
   if (tabName === 'inventory') {
-    // Заголовок для инвентаря
-    headerHtml = `
-      <div class="items-header header">
-        <h3 class="item-name">${sectionName}</h3>
-        <div class="item-header item-price">${game.i18n.localize("DND5E.Price")}</div>
-        <div class="item-header item-weight">${game.i18n.localize("DND5E.Weight")}</div>
-        <div class="item-header item-quantity">${game.i18n.localize("DND5E.Quantity")}</div>
-        <div class="item-header item-uses">${game.i18n.localize("DND5E.Charges")}</div>
-        <div class="item-header item-controls"></div>
-      </div>
-    `;
+    if (gridOn) {
+      // Заголовок для инвентаря в режиме сетки: только название секции
+      headerHtml = `
+        <div class="items-header header cis-grid-header">
+          <h3 class="item-name">${sectionName}</h3>
+        </div>
+      `;
+    } else {
+      // Классический заголовок таблицы
+      headerHtml = `
+        <div class="items-header header">
+          <h3 class="item-name">${sectionName}</h3>
+          <div class="item-header item-price">${game.i18n.localize("DND5E.Price")}</div>
+          <div class="item-header item-weight">${game.i18n.localize("DND5E.Weight")}</div>
+          <div class="item-header item-quantity">${game.i18n.localize("DND5E.Quantity")}</div>
+          <div class="item-header item-uses">${game.i18n.localize("DND5E.Charges")}</div>
+          <div class="item-header item-controls"></div>
+        </div>
+      `;
+    }
   } else if (tabName === 'features') {
     // Заголовок для особенностей
     headerHtml = `
@@ -382,7 +465,12 @@ function createCustomSection(sectionName, items, app, data, tabName) {
     
     // Создаем HTML для отдельного предмета в зависимости от вкладки
     if (tabName === 'inventory') {
-      itemsHtml += createInventoryItemHtml(item, itemContext, hasUses, quantity, price, totalWeight, data);
+      if (gridOn) {
+        // Для инвентаря используем компактные плитки-ссылки (иконки) без текста
+        itemsHtml += createInventoryGridItemHtml(item, itemContext, quantity);
+      } else {
+        itemsHtml += createInventoryItemHtml(item, itemContext, hasUses, quantity, price, totalWeight, data);
+      }
     } else if (tabName === 'features') {
       itemsHtml += createFeatureItemHtml(item, itemContext, hasUses, data);
     } else if (tabName === 'spells') {
@@ -392,9 +480,9 @@ function createCustomSection(sectionName, items, app, data, tabName) {
   
   // Возвращаем полный HTML секции
   return $(`
-    <div class="items-section card" data-custom-section="${sectionName}" data-type="custom" data-tab="${tabName}">
+    <div class="items-section card ${tabName === 'inventory' && gridOn ? 'cis-grid' : ''}" data-custom-section="${sectionName}" data-type="custom" data-tab="${tabName}">
       ${headerHtml}
-      <ol class="item-list unlist">
+      <ol class="item-list unlist ${tabName === 'inventory' && gridOn ? 'cis-grid-list' : ''}">
         ${itemsHtml}
       </ol>
     </div>
@@ -500,6 +588,18 @@ function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, to
         </div>
       </div>
       
+    </li>
+  `;
+}
+
+// Компактная плитка для предмета инвентаря (представление сеткой)
+function createInventoryGridItemHtml(item, itemContext, quantity) {
+  return `
+    <li class="item cis-grid-item" data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${item.name}" data-item-sort="${item.sort || 0}">
+      <a class="cis-grid-tile item-action item-tooltip" role="button" data-action="use" aria-label="${item.name}">
+        <img class="cis-grid-image" src="${item.img}" alt="${item.name}">
+        ${quantity > 1 ? `<span class="cis-qty" aria-label="${game.i18n.localize('DND5E.Quantity')}">${quantity}</span>` : ''}
+      </a>
     </li>
   `;
 }

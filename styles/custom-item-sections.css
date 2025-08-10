@@ -29,4 +29,103 @@
   opacity: 1 !important;
   filter: none !important;
 }
+
+/* --- Сетка плиток для инвентаря (применяется и к стандартным секциям через классы) --- */
+[data-custom-section].cis-grid,
+.tab.inventory .items-section.cis-grid {
+  padding-bottom: 0.25rem;
+}
+
+[data-custom-section] .cis-grid-header,
+.tab.inventory .cis-grid-header {
+  margin-bottom: 0.25rem;
+}
+
+[data-custom-section] .cis-grid-list,
+.tab.inventory .cis-grid-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+[data-custom-section] .cis-grid-item,
+.tab.inventory .cis-grid-item {
+  list-style: none;
+}
+
+[data-custom-section] .cis-grid-tile,
+.tab.inventory .cis-grid-tile {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 80px; /* фиксируем высоту, ширина авто */
+  width: auto;
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--dnd5e-color-card, rgba(0,0,0,0.1));
+  cursor: pointer;
+}
+
+[data-custom-section] .cis-grid-image,
+.tab.inventory .cis-grid-image {
+  height: 100%;
+  width: auto; /* ширина по содержимому, чтобы не резать пропорции */
+  object-fit: contain; /* никаких обрезаний, вписываемся по высоте */
+  pointer-events: none;
+}
+
+/* Бейдж количества в правом нижнем углу */
+[data-custom-section] .cis-qty,
+.tab.inventory .cis-qty {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Увеличенные цена и вес в тултипе предмета */
+:is(#tooltip, .locked-tooltip).item-tooltip .header .weight,
+:is(#tooltip, .locked-tooltip).item-tooltip .header .price {
+  width: 110px;
+  gap: 0.5rem;
+  /* Терминальный жёлтый */
+  color: #E8D488;
+}
+
+/* Название предмета в тултипе — крупнее и в терминальном цвете */
+:is(#tooltip, .locked-tooltip).item-tooltip .header .top .name .title {
+  font-size: var(--font-size-23);
+  line-height: 1.1;
+  color: #E8D488;
+  text-shadow: 0 0 6px rgba(232, 212, 136, 0.5);
+}
+
+:is(#tooltip, .locked-tooltip).item-tooltip .header .weight span,
+:is(#tooltip, .locked-tooltip).item-tooltip .header .price span {
+  height: auto;
+  font-size: var(--font-size-20);
+  font-weight: 600;
+  color: #E8D488;
+  text-shadow: 0 0 6px rgba(232, 212, 136, 0.55);
+}
+
+:is(#tooltip, .locked-tooltip).item-tooltip .header .weight i,
+:is(#tooltip, .locked-tooltip).item-tooltip .header .price i,
+:is(#tooltip, .locked-tooltip).item-tooltip .header .price .currency {
+  font-size: var(--font-size-20);
+  color: #E8D488;
+  filter: drop-shadow(0 0 2px rgba(232, 212, 136, 0.6));
+}
+
+/* Общий цвет для нижней плашки тултипа (цена/вес/заряды) при тёмной теме */
+:is(#tooltip, .locked-tooltip).item-tooltip .header .bottom {
+  color: #E8D488;
+}
  

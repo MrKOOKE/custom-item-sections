@@ -9,6 +9,11 @@
         "Name": "Enable Custom Item Sections",
         "Hint": "Allow items to be organized into custom sections in character sheets across different tabs"
       }
+      ,
+      "EnableGridInventory": {
+        "Name": "Grid Inventory View (icons only)",
+        "Hint": "Display inventory items as square icon tiles (names/details hidden; shown in tooltip). Applies to both default and custom sections."
+      }
     }
   }
 } 
