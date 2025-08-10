@@ -45,13 +45,14 @@
 .tab.inventory .cis-grid-list {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start; /* важно для плиток разной высоты */
   gap: 6px;
 }
 
 [data-custom-section] .cis-grid-item,
 .tab.inventory .cis-grid-item {
   list-style: none;
+  align-self: flex-start; /* выравниваем начало для всех контейнеров */
 }
 
 [data-custom-section] .cis-grid-tile,
@@ -66,6 +67,8 @@
   overflow: hidden;
   background: var(--dnd5e-color-card, rgba(0,0,0,0.1));
   cursor: pointer;
+  outline: 2px solid transparent;
+  transition: outline-color 120ms ease;
 }
 
 [data-custom-section] .cis-grid-image,
@@ -74,6 +77,14 @@
   width: auto; /* ширина по содержимому, чтобы не резать пропорции */
   object-fit: contain; /* никаких обрезаний, вписываемся по высоте */
   pointer-events: none;
+}
+
+/* Подсветка надетых предметов в сетке */
+[data-custom-section] .cis-grid-item.equipped .cis-grid-tile,
+.tab.inventory .cis-grid-item.equipped .cis-grid-tile {
+  /* Терминальный жёлтый (#E8D488) с лёгким свечением */
+  outline: 4px solid #E8D488;
+  box-shadow: 0 0 0 2px #E8D488 inset, 0 0 14px rgba(232, 212, 136, 0.75);
 }
 
 /* Бейдж количества в правом нижнем углу */

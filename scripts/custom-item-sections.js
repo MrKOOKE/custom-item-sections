@@ -6,6 +6,17 @@ const FLAGS = {
 
 // Храним раскрытые контейнеры в рамках сессии (по актеру)
 const expandedContainersByActor = new Map();
+// Безопасная локализация: если ключа нет — вернём осмысленный fallback
+function localizeSafe(key, fallback) {
+  try {
+    if (game.i18n?.has?.(key)) return game.i18n.localize(key);
+    const loc = game.i18n?.localize?.(key);
+    if (loc && loc !== key) return loc;
+  } catch (_) { /* ignore */ }
+  if (fallback !== undefined) return fallback;
+  const lang = (game.i18n?.lang ?? '').toLowerCase();
+  return lang.startsWith('ru') ? 'Пусто' : 'Empty';
+}
 // Чтобы не дублировать обработчики на одних и тех же DOM-зонах
 const wiredDropZones = new WeakSet();
 
@@ -256,6 +267,8 @@ function applyGridInventory(app, html) {
       const id = $li.data('itemId');
       const name = $li.data('itemName') ?? '';
       const img = $li.find('img, .item-image').first().attr('src');
+      const itemDoc = app.actor.items.get(id);
+      const isEquipped = Boolean(itemDoc?.system?.equipped);
       // Количество
       let qty = $li.find('[data-name="system.quantity"]').val();
       qty = Number(qty ?? 0);
@@ -267,7 +280,7 @@ function applyGridInventory(app, html) {
       if (qty > 1) tile.append(`<span class="cis-qty">${qty}</span>`);
 
       // Очистить и применить классы
-      $li.attr('class', 'item cis-grid-item');
+      $li.attr('class', `item cis-grid-item${isEquipped ? ' equipped' : ''}`);
       $li.empty().append(tile);
       // Назначаем тултип для новой плитки
       applyItemTooltips(tile[0], app);
@@ -282,6 +295,12 @@ function applyGridInventory(app, html) {
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
     if (!item) return;
+    if (event.shiftKey && (item.system?.equipped !== undefined)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleEquip(item, li);
+      return;
+    }
     if (item.type === 'container') {
       event.preventDefault();
       event.stopPropagation();
@@ -664,8 +683,9 @@ function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, to
 
 // Компактная плитка для предмета инвентаря (представление сеткой)
 function createInventoryGridItemHtml(item, itemContext, quantity) {
+  const equippedClass = item.system?.equipped ? ' equipped' : '';
   return `
-    <li class="item cis-grid-item" data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${item.name}" data-item-sort="${item.sort || 0}" data-item-type="${item.type}">
+    <li class="item cis-grid-item${equippedClass}" data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${item.name}" data-item-sort="${item.sort || 0}" data-item-type="${item.type}">
       <a class="cis-grid-tile item-action item-tooltip" role="button" data-action="use" aria-label="${item.name}">
         <img class="cis-grid-image" src="${item.img}" alt="${item.name}">
         ${quantity > 1 ? `<span class="cis-qty" aria-label="${game.i18n.localize('DND5E.Quantity')}">${quantity}</span>` : ''}
@@ -916,13 +936,20 @@ function attachCustomSectionEventHandlers(html, app) {
     }
   });
   
-  // Обработчик клика по предмету: контейнеры разворачиваем, прочие используем
+  // Обработчик клика по предмету: Shift+ЛКМ — (раз)надеть; контейнеры — развернуть; иначе use
   html.find('[data-custom-section] [data-action="use"]').off('click.cis-use').on('click.cis-use', async (event) => {
     const li = event.currentTarget.closest('.item');
     if (!li) return;
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
     if (!item) return;
+    // Shift+ЛКМ: переключение экипировки, если поддерживается
+    if (event.shiftKey && (item.system?.equipped !== undefined)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleEquip(item, li);
+      return;
+    }
     if (item.type === 'container') {
       event.preventDefault();
       event.stopPropagation();
@@ -1009,30 +1036,30 @@ function wireItemDragDrop(app, $elements) {
     const itemId = $element.data('item-id');
     const item = app.actor.items.get(itemId);
     if (!item) return;
-
-    element.draggable = true;
-    element.addEventListener('dragstart', (event) => {
-      const dragData = {
-        type: 'Item',
-        id: item.id,
-        uuid: item.uuid,
-        actorId: app.actor.id,
-        actorUuid: app.actor.uuid
-      };
+    
+      element.draggable = true;
+      element.addEventListener('dragstart', (event) => {
+        const dragData = {
+          type: 'Item',
+          id: item.id,
+          uuid: item.uuid,
+          actorId: app.actor.id,
+          actorUuid: app.actor.uuid
+        };
       if (event.dataTransfer) {
         event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
         event.dataTransfer.effectAllowed = 'copyMove';
       }
-      $element.addClass('dragging');
-    });
+        $element.addClass('dragging');
+      });
     element.addEventListener('dragend', () => $element.removeClass('dragging'));
-    element.addEventListener('dragover', (event) => {
-      event.preventDefault();
+      element.addEventListener('dragover', (event) => {
+        event.preventDefault();
       event.stopPropagation();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-    });
-    element.addEventListener('drop', async (event) => {
-      event.preventDefault();
+      });
+      element.addEventListener('drop', async (event) => {
+        event.preventDefault();
       event.stopPropagation();
       try {
         const dropStr = event.dataTransfer?.getData('text/plain');
@@ -1052,20 +1079,52 @@ function wireItemDragDrop(app, $elements) {
   });
 }
 
+// Переключение экипировки с обновлением классов и подсветки
+async function toggleEquip(item, liElement) {
+  const equipped = Boolean(item.system?.equipped);
+  await item.update({ 'system.equipped': !equipped });
+  const li = liElement instanceof HTMLElement ? liElement : (liElement?.[0] ?? null);
+  if (li) li.classList.toggle('equipped', !equipped);
+}
+
 // Переключить inline-разворот контейнера
 async function toggleInlineContainer(app, html, liElement, containerItem) {
   const $li = $(liElement);
   const actorExpanded = getExpandedContainersForActor(app.actor.id);
-  const alreadyExpanded = $li.next().hasClass('cis-container-contents');
+  // Проверяем существование панели как соседнего элемента или как внутри обертки
+  let nextEl = $li.next();
+  if (nextEl.length === 0 && $li.parent().hasClass('cis-grid-row')) {
+    nextEl = $li.parent().children('.cis-container-contents');
+  }
+  const alreadyExpanded = nextEl.length && nextEl.hasClass('cis-container-contents');
 
   if (alreadyExpanded) {
-    $li.next('.cis-container-contents').remove();
+    if ($li.parent().hasClass('cis-grid-row')) {
+      $li.parent().children('.cis-container-contents').remove();
+      // Возвращаем li обратно вместо обертки
+      const wrapper = $li.parent()[0];
+      $(wrapper).replaceWith($li);
+    } else {
+      $li.next('.cis-container-contents').remove();
+    }
     actorExpanded.delete(containerItem.id);
     return;
   }
 
   const panel = await buildContainerContentsPanel(app, containerItem);
-  $li.after(panel);
+  // Вставка справа в сетке, иначе ниже
+  if ($li.hasClass('cis-grid-item')) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'cis-grid-row';
+    wrapper.style.display = 'flex';
+    wrapper.style.gap = '8px';
+    wrapper.style.alignItems = 'flex-start';
+    $li.replaceWith(wrapper);
+    wrapper.appendChild(liElement);
+    wrapper.appendChild(panel[0]);
+  } else {
+    $li.after(panel);
+  }
   actorExpanded.add(containerItem.id);
 }
 
@@ -1122,7 +1181,7 @@ async function buildContainerContentsPanel(app, containerItem) {
     }
     body.append($group);
   }
-  if (items.length === 0) body.append(`<div class="cis-container-empty">${game.i18n.localize('DND5E.Empty')}</div>`);
+  if (items.length === 0) body.append(`<div class="cis-container-empty">${localizeSafe('DND5E.Empty', undefined)}</div>`);
 
   // Тултипы и DnD внутри панели
   $panel.find('.item-tooltip').each((_, el) => applyItemTooltips(el, app));
@@ -1138,11 +1197,13 @@ async function buildContainerContentsPanel(app, containerItem) {
   panelEl.addEventListener('drop', async (event) => {
     event.preventDefault();
     event.stopPropagation();
-    try {
-      const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
+        try {
+          const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
       const dropped = await resolveDroppedItem(app, dropData);
       if (!dropped) return;
       await moveItemToContainer(app, dropped, containerItem);
+      // После изменения содержимого — восстановить обертку/панель, чтобы не уехало позиционирование
+      restoreExpandedContainers(app, $(html[0] ?? app.element));
     } catch (err) { /* ignore */ }
   });
 
@@ -1156,10 +1217,33 @@ function restoreExpandedContainers(app, html) {
   for (const containerId of expanded) {
     const li = html[0]?.querySelector(`[data-custom-section] .item[data-item-id="${containerId}"]`);
     const container = app.actor.items.get(containerId);
-    if (li && container?.type === 'container') {
-      buildContainerContentsPanel(app, container).then(panel => $(li).after(panel));
+    if (!li || container?.type !== 'container') continue;
+
+    // Удаляем возможные прежние панели в DOM для чистоты
+    const $li = $(li);
+    if ($li.next().hasClass('cis-container-contents')) $li.next('.cis-container-contents').remove();
+    if ($li.parent().hasClass('cis-grid-row')) $li.parent().children('.cis-container-contents').remove();
+
+    buildContainerContentsPanel(app, container).then(panel => {
+      if ($li.hasClass('cis-grid-item')) {
+        // Если уже есть обертка строки, просто добавим панель внутрь
+        if ($li.parent().hasClass('cis-grid-row')) {
+          $li.parent()[0].appendChild(panel[0]);
+        } else {
+          const wrapper = document.createElement('div');
+          wrapper.className = 'cis-grid-row';
+          wrapper.style.display = 'flex';
+          wrapper.style.gap = '8px';
+          wrapper.style.alignItems = 'flex-start';
+          $li.replaceWith(wrapper);
+          wrapper.appendChild(li);
+          wrapper.appendChild(panel[0]);
+        }
+      } else {
+        $li.after(panel);
+        }
+      });
     }
-  }
 }
 
 async function resolveMaybePromise(value) {
