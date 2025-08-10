@@ -14,6 +14,8 @@
         "Name": "Grid Inventory View (icons only)",
         "Hint": "Display inventory items as square icon tiles (names/details hidden; shown in tooltip). Applies to both default and custom sections."
       }
-    }
+    },
+    "SplitQuantity": "Split Quantity",
+    "All": "All"
   }
 } 

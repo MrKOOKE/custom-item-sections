@@ -4,6 +4,16 @@ const FLAGS = {
   SECTION: 'section'
 };
 
+// Храним раскрытые контейнеры в рамках сессии (по актеру)
+const expandedContainersByActor = new Map();
+// Чтобы не дублировать обработчики на одних и тех же DOM-зонах
+const wiredDropZones = new WeakSet();
+
+function getExpandedContainersForActor(actorId) {
+  if (!expandedContainersByActor.has(actorId)) expandedContainersByActor.set(actorId, new Set());
+  return expandedContainersByActor.get(actorId);
+}
+
 // Инициализация модуля
 Hooks.once('init', () => {
   console.log(`${MODULE_ID} | Инициализация модуля Custom Item Sections`);
@@ -211,6 +221,9 @@ function processCustomSections(app, html, data) {
 
   // Применяем сетчатый вид к стандартным секциям, если включено в настройках
   applyGridInventory(app, html);
+
+  // Восстанавливаем ранее раскрытые контейнеры
+  restoreExpandedContainers(app, html);
 }
 
 // Преобразуем стандартные секции dnd5e инвентаря в сетку (без названий), если включено
@@ -261,14 +274,69 @@ function applyGridInventory(app, html) {
     });
   });
 
-  // Навешиваем обработчик на использование предмета по клику по плитке для стандартных секций
-  inventoryTabs.off('click.cis-grid-use');
-  inventoryTabs.on('click.cis-grid-use', '.cis-grid-item .cis-grid-tile', async (event) => {
+  // Обработчик клика по плитке в стандартных секциях: контейнеры разворачиваем inline
+  inventoryTabs.off('click.cis-grid');
+  inventoryTabs.on('click.cis-grid', '.cis-grid-item .cis-grid-tile', async (event) => {
     const li = event.currentTarget.closest('.item');
     if (!li) return;
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
-    if (item) await item.use();
+    if (!item) return;
+    if (item.type === 'container') {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleInlineContainer(app, html, li, item);
+      return;
+    }
+    await item.use();
+  });
+
+  // DnD: делегированные обработчики для стандартных секций (сеточные плитки)
+  inventoryTabs.off('dragstart.cis-grid dragend.cis-grid dragover.cis-grid drop.cis-grid');
+  inventoryTabs.on('dragstart.cis-grid', '.cis-grid-item', (event) => {
+    const li = event.currentTarget.closest('.item');
+    if (!li) return;
+    const itemId = li.dataset.itemId;
+    const item = app.actor.items.get(itemId);
+    if (!item) return;
+    const dragData = { type: 'Item', id: item.id, uuid: item.uuid, actorId: app.actor.id, actorUuid: app.actor.uuid };
+    if (event.originalEvent?.dataTransfer) {
+      event.originalEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+      event.originalEvent.dataTransfer.effectAllowed = 'copyMove';
+    }
+    if (event.originalEvent?.dataTransfer) event.originalEvent.dataTransfer.effectAllowed = 'copyMove';
+    li.classList.add('dragging');
+  });
+  inventoryTabs.on('dragend.cis-grid', '.cis-grid-item', (event) => {
+    const li = event.currentTarget.closest('.item');
+    if (li) li.classList.remove('dragging');
+  });
+  inventoryTabs.on('dragover.cis-grid', '.cis-grid-item', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.originalEvent?.dataTransfer) event.originalEvent.dataTransfer.dropEffect = 'move';
+  });
+  inventoryTabs.on('drop.cis-grid', '.cis-grid-item', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const li = event.currentTarget.closest('.item');
+    if (!li) return;
+    const targetItem = app.actor.items.get(li.dataset.itemId);
+    if (!targetItem) return;
+    try {
+      const dropDataStr = event.originalEvent?.dataTransfer?.getData('text/plain');
+      if (!dropDataStr) return;
+      const dropData = JSON.parse(dropDataStr);
+      const dropped = await resolveDroppedItem(app, dropData);
+      if (!dropped) return;
+      if (targetItem.type === 'container' && dropped.id !== targetItem.id) {
+        await moveItemToContainer(app, dropped, targetItem);
+      } else {
+        await moveItemToRoot(app, dropped);
+      }
+    } catch (e) {
+      console.error(`${MODULE_ID} | drop.cis-grid error`, e);
+    }
   });
 }
 
@@ -307,6 +375,8 @@ function addCustomSectionsToDOM(app, html, data) {
   
   // Проходим по всем предметам актера и группируем их
   app.actor.items.forEach(item => {
+    // Пропускаем предметы, которые уже находятся в контейнерах
+    if (item.system?.container) return;
     const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
     const itemTab = getItemTab(item);
     
@@ -495,7 +565,7 @@ function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, to
     <li class="item collapsible ${itemContext.isExpanded ? '' : 'collapsed'}" 
         data-item-id="${item.id}" data-entry-id="${item.id}" 
         data-item-name="${item.name}" data-item-sort="${item.sort || 0}"
-        data-ungrouped="all" data-grouped="${item.type}">
+        data-ungrouped="all" data-grouped="${item.type}" data-item-type="${item.type}">
       
       <div class="item-row">
         
@@ -595,7 +665,7 @@ function createInventoryItemHtml(item, itemContext, hasUses, quantity, price, to
 // Компактная плитка для предмета инвентаря (представление сеткой)
 function createInventoryGridItemHtml(item, itemContext, quantity) {
   return `
-    <li class="item cis-grid-item" data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${item.name}" data-item-sort="${item.sort || 0}">
+    <li class="item cis-grid-item" data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${item.name}" data-item-sort="${item.sort || 0}" data-item-type="${item.type}">
       <a class="cis-grid-tile item-action item-tooltip" role="button" data-action="use" aria-label="${item.name}">
         <img class="cis-grid-image" src="${item.img}" alt="${item.name}">
         ${quantity > 1 ? `<span class="cis-qty" aria-label="${game.i18n.localize('DND5E.Quantity')}">${quantity}</span>` : ''}
@@ -846,14 +916,20 @@ function attachCustomSectionEventHandlers(html, app) {
     }
   });
   
-  // Обработчик для использования предмета
-  html.find('[data-custom-section] [data-action="use"]').click(async (event) => {
-    const itemId = $(event.currentTarget).closest('.item').data('item-id');
+  // Обработчик клика по предмету: контейнеры разворачиваем, прочие используем
+  html.find('[data-custom-section] [data-action="use"]').off('click.cis-use').on('click.cis-use', async (event) => {
+    const li = event.currentTarget.closest('.item');
+    if (!li) return;
+    const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
-    if (item) {
-      console.log(`${MODULE_ID} | Using item ${item.name}`);
-      await item.use();
+    if (!item) return;
+    if (item.type === 'container') {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleInlineContainer(app, html, li, item);
+      return;
     }
+    await item.use();
   });
   
   // Обработчик для удаления предмета
@@ -897,73 +973,371 @@ function attachCustomSectionEventHandlers(html, app) {
     }
   });
 
-  // Добавляем обработчики перетаскивания для элементов в кастомных секциях
-  html.find('[data-custom-section] .item[data-item-id]').each((index, element) => {
+  // DnD для всех предметов в кастомных секциях
+  wireItemDragDrop(app, html.find('[data-custom-section] .item[data-item-id]'));
+
+  // Зона для дропа на корень инвентаря (вкладка inventory)
+  const inventoryRoot = html[0]?.querySelector('.tab.inventory .items-list');
+  if (inventoryRoot) {
+    if (!wiredDropZones.has(inventoryRoot)) {
+      inventoryRoot.addEventListener('dragover', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+      inventoryRoot.addEventListener('drop', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        try {
+          const str = event.dataTransfer?.getData('text/plain');
+          if (!str) return;
+          const dropData = JSON.parse(str);
+          const dropped = await resolveDroppedItem(app, dropData);
+          if (!dropped) return;
+          await moveItemToRoot(app, dropped);
+        } catch (e) { /* ignore */ }
+      });
+      wiredDropZones.add(inventoryRoot);
+    }
+  }
+}
+
+// Применяет DnD-обработчики к коллекции DOM-элементов предметов
+function wireItemDragDrop(app, $elements) {
+  $elements.each((index, element) => {
     const $element = $(element);
     const itemId = $element.data('item-id');
     const item = app.actor.items.get(itemId);
-    
-    if (item) {
-      // Делаем элемент перетаскиваемым
-      element.draggable = true;
-      
-      // Добавляем обработчик dragstart
-      element.addEventListener('dragstart', (event) => {
-        console.log(`${MODULE_ID} | Starting drag for item ${item.name}`);
-        
-        // Создаем данные для перетаскивания
-        const dragData = {
-          type: 'Item',
-          id: item.id,
-          uuid: item.uuid,
-          actorId: app.actor.id,
-          actorUuid: app.actor.uuid
-        };
-        
-        // Устанавливаем данные перетаскивания
+    if (!item) return;
+
+    element.draggable = true;
+    element.addEventListener('dragstart', (event) => {
+      const dragData = {
+        type: 'Item',
+        id: item.id,
+        uuid: item.uuid,
+        actorId: app.actor.id,
+        actorUuid: app.actor.uuid
+      };
+      if (event.dataTransfer) {
         event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
-        event.dataTransfer.effectAllowed = 'copy';
-        
-        // Добавляем класс для визуальной обратной связи
-        $element.addClass('dragging');
-      });
-      
-      // Добавляем обработчик dragend
-      element.addEventListener('dragend', (event) => {
-        console.log(`${MODULE_ID} | Ending drag for item ${item.name}`);
-        $element.removeClass('dragging');
-      });
-      
-      // Добавляем обработчик dragover для визуальной обратной связи
-      element.addEventListener('dragover', (event) => {
-        event.preventDefault();
-        event.dataTransfer.dropEffect = 'copy';
-      });
-      
-      // Добавляем обработчик drop для приема других предметов
-      element.addEventListener('drop', async (event) => {
-        event.preventDefault();
-        
-        try {
-          const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
-          
-          if (dropData.type === 'Item' && dropData.id !== item.id) {
-            const droppedItem = app.actor.items.get(dropData.id);
-            if (droppedItem) {
-              console.log(`${MODULE_ID} | Dropped item ${droppedItem.name} onto ${item.name}`);
-              
-              // Здесь можно добавить логику для обработки перетаскивания предметов
-              // Например, перемещение в контейнер, объединение стаков и т.д.
-              
-              // Пока просто показываем уведомление
-              ui.notifications.info(`Перетащили ${droppedItem.name} на ${item.name}`);
-            }
-          }
-        } catch (error) {
-          console.error(`${MODULE_ID} | Error processing drop:`, error);
+        event.dataTransfer.effectAllowed = 'copyMove';
+      }
+      $element.addClass('dragging');
+    });
+    element.addEventListener('dragend', () => $element.removeClass('dragging'));
+    element.addEventListener('dragover', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+    });
+    element.addEventListener('drop', async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      try {
+        const dropStr = event.dataTransfer?.getData('text/plain');
+        if (!dropStr) return;
+        const dropData = JSON.parse(dropStr);
+        const dropped = await resolveDroppedItem(app, dropData);
+        if (!dropped) return;
+        if (item.type === 'container' && dropped.id !== item.id) {
+          await moveItemToContainer(app, dropped, item);
+          return;
         }
-      });
+        await moveItemToRoot(app, dropped);
+      } catch (error) {
+        console.error(`${MODULE_ID} | Error processing drop:`, error);
+      }
+    });
+  });
+}
+
+// Переключить inline-разворот контейнера
+async function toggleInlineContainer(app, html, liElement, containerItem) {
+  const $li = $(liElement);
+  const actorExpanded = getExpandedContainersForActor(app.actor.id);
+  const alreadyExpanded = $li.next().hasClass('cis-container-contents');
+
+  if (alreadyExpanded) {
+    $li.next('.cis-container-contents').remove();
+    actorExpanded.delete(containerItem.id);
+    return;
+  }
+
+  const panel = await buildContainerContentsPanel(app, containerItem);
+  $li.after(panel);
+  actorExpanded.add(containerItem.id);
+}
+
+// Построить панель содержимого контейнера
+async function buildContainerContentsPanel(app, containerItem) {
+  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
+  const contents = await resolveMaybePromise(containerItem.system.contents);
+  const items = Array.from(contents?.values?.() ?? []);
+
+  const byGroup = new Map();
+  for (const it of items) {
+    const custom = it.getFlag(MODULE_ID, FLAGS.SECTION);
+    const groupName = (typeof custom === 'string' && custom.trim()) ? custom.trim() : (CONFIG.Item?.typeLabels?.[it.type] || it.type);
+    if (!byGroup.has(groupName)) byGroup.set(groupName, []);
+    byGroup.get(groupName).push(it);
+  }
+  const groupNames = Array.from(byGroup.keys()).sort((a, b) => a.localeCompare(b, game.i18n.lang));
+  for (const name of groupNames) byGroup.get(name).sort((a, b) => a.name.localeCompare(b.name, game.i18n.lang));
+
+  // Заголовок контейнера + емкость
+  // Вычисляем текущую загрузку контейнера через системный метод
+  const capacity = await containerItem.system.computeCapacity(); // { value, max, pct, units }
+  const capacityLabel = game.i18n.localize(CONFIG.DND5E.itemCapacityTypes?.[containerItem.system.capacity?.type || 'weight'] ?? '');
+
+  const $panel = $(`
+    <div class="cis-container-contents card" data-container-id="${containerItem.id}">
+      <div class="cis-container-header">
+        <h4><i class="fa-solid fa-box-open"></i> ${containerItem.name}</h4>
+        <div class="spacer"></div>
+        <div class="hint">${capacityLabel}: ${Math.round(capacity.value * 100) / 100} / ${Number.isFinite(capacity.max) ? capacity.max : '&infin;'} ${capacity.units}</div>
+      </div>
+      <div class="cis-container-body"></div>
+    </div>
+  `);
+  const body = $panel.find('.cis-container-body');
+  for (const groupName of groupNames) {
+    const itemsInGroup = byGroup.get(groupName);
+    const localizedGroup = groupName.startsWith('TYPES.Item.')
+      ? game.i18n.localize(groupName)
+      : groupName;
+    const $group = $(`
+      <div class="cis-container-group" data-group-name="${localizedGroup}">
+        <div class="cis-container-group-header"><h5>${localizedGroup}</h5></div>
+        <ol class="item-list unlist ${gridOn ? 'cis-grid-list' : ''}"></ol>
+      </div>
+    `);
+    const list = $group.find('ol');
+    for (const it of itemsInGroup) {
+      const qty = Number(it.system.quantity ?? 1);
+      const htmlStr = gridOn
+        ? createInventoryGridItemHtml(it, {}, qty)
+        : createInventoryItemHtml(it, {}, false, qty, it.system.price?.value || 0, it.system.weight || 0, { editable: app.options.editable, owner: app.actor.isOwner });
+      list.append(htmlStr);
     }
+    body.append($group);
+  }
+  if (items.length === 0) body.append(`<div class="cis-container-empty">${game.i18n.localize('DND5E.Empty')}</div>`);
+
+  // Тултипы и DnD внутри панели
+  $panel.find('.item-tooltip').each((_, el) => applyItemTooltips(el, app));
+  wireItemDragDrop(app, $panel.find('.item[data-item-id]'));
+
+  // Drop внутрь панели — положить в контейнер (с запросом количества для стаков)
+  const panelEl = $panel[0];
+  panelEl.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = 'move';
+  });
+  panelEl.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
+      const dropped = await resolveDroppedItem(app, dropData);
+      if (!dropped) return;
+      await moveItemToContainer(app, dropped, containerItem);
+    } catch (err) { /* ignore */ }
+  });
+
+  return $panel;
+}
+
+// Восстановление ранее раскрытых контейнеров
+function restoreExpandedContainers(app, html) {
+  const expanded = getExpandedContainersForActor(app.actor.id);
+  if (!expanded || expanded.size === 0) return;
+  for (const containerId of expanded) {
+    const li = html[0]?.querySelector(`[data-custom-section] .item[data-item-id="${containerId}"]`);
+    const container = app.actor.items.get(containerId);
+    if (li && container?.type === 'container') {
+      buildContainerContentsPanel(app, container).then(panel => $(li).after(panel));
+    }
+  }
+}
+
+async function resolveMaybePromise(value) {
+  if (value && typeof value.then === 'function') return await value;
+  return value;
+}
+
+async function resolveDroppedItem(app, dropData) {
+  try {
+    if (dropData?.type === 'Item' && dropData.actorId === app.actor.id && dropData.id) {
+      return app.actor.items.get(dropData.id);
+    }
+    if (dropData?.uuid) {
+      const doc = await fromUuid(dropData.uuid);
+      if (doc?.documentName === 'Item') return doc;
+      if (doc?.constructor?.documentName === 'Item') return doc;
+    }
+  } catch (e) {
+    console.warn(`${MODULE_ID} | resolveDroppedItem failed`, e);
+  }
+  return null;
+}
+
+async function moveItemToContainer(app, droppedItem, containerItem) {
+  // Сколько переносить?
+  const qty = Number(droppedItem.system?.quantity ?? 1);
+  let amount = qty;
+  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: qty });
+  if (!amount || amount < 1) return;
+
+  if (droppedItem?.parent === app.actor) {
+    // Перенос внутри одного актера: если переносим часть стака — разделяем
+    if (amount < qty) {
+      // Попробуем слить со стеком в целевом контейнере
+      const mergeTarget = findMergeTarget(app.actor, droppedItem, containerItem.id);
+      if (mergeTarget) {
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+        await droppedItem.update({ 'system.quantity': qty - amount });
+      } else {
+        const newData = foundry.utils.duplicate(droppedItem.toObject());
+        newData.system.quantity = amount;
+        newData.system.container = containerItem.id;
+        await app.actor.createEmbeddedDocuments('Item', [newData]);
+        await droppedItem.update({ 'system.quantity': qty - amount });
+      }
+    } else {
+      // Переносим весь стек: если есть цель для слияния — сливаем и удаляем исходный
+      const mergeTarget = findMergeTarget(app.actor, droppedItem, containerItem.id);
+      if (mergeTarget) {
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + qty });
+        await droppedItem.delete();
+      } else {
+        await droppedItem.update({ 'system.container': containerItem.id });
+      }
+    }
+    return;
+  }
+
+  // Перенос из внешнего источника: создаем копию с нужным количеством
+  const data = droppedItem?.toObject ? droppedItem.toObject() : droppedItem;
+  if (!data) return;
+  data.system = data.system ?? {};
+  data.system.quantity = amount;
+  // Слияние с существующим стеком в контейнере
+  const mergeTarget = findMergeTarget(app.actor, data, containerItem.id);
+  if (mergeTarget) {
+    await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+  } else {
+    foundry.utils.setProperty(data, 'system.container', containerItem.id);
+    await app.actor.createEmbeddedDocuments('Item', [data]);
+  }
+}
+
+async function moveItemToRoot(app, droppedItem) {
+  const qty = Number(droppedItem.system?.quantity ?? 1);
+  let amount = qty;
+  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: qty });
+  if (!amount || amount < 1) return;
+
+  if (droppedItem?.parent === app.actor) {
+    const mergeTarget = findMergeTarget(app.actor, droppedItem, null);
+    if (amount < qty) {
+      if (mergeTarget) {
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+        await droppedItem.update({ 'system.quantity': qty - amount });
+      } else {
+        const newData = foundry.utils.duplicate(droppedItem.toObject());
+        newData.system.quantity = amount;
+        newData.system.container = null;
+        await app.actor.createEmbeddedDocuments('Item', [newData]);
+        await droppedItem.update({ 'system.quantity': qty - amount });
+      }
+    } else {
+      if (mergeTarget) {
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + qty });
+        await droppedItem.delete();
+      } else {
+        await droppedItem.update({ 'system.container': null });
+      }
+    }
+    return;
+  }
+
+  const data = droppedItem?.toObject ? droppedItem.toObject() : droppedItem;
+  if (!data) return;
+  data.system = data.system ?? {};
+  data.system.quantity = amount;
+  const mergeTarget = findMergeTarget(app.actor, data, null);
+  if (mergeTarget) {
+    await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+  } else {
+    foundry.utils.setProperty(data, 'system.container', null);
+    await app.actor.createEmbeddedDocuments('Item', [data]);
+  }
+}
+
+// Поиск подходящего стека для слияния в указанной локации (containerId или null)
+function findMergeTarget(actor, sourceItemLike, containerId) {
+  const key = getMergeKey(sourceItemLike);
+  return actor.items.find(i => (i.system?.container ?? null) === (containerId ?? null)
+    && i.id !== sourceItemLike.id
+    && getMergeKey(i) === key);
+}
+
+function getMergeKey(itemLike) {
+  const sys = itemLike.system ?? {};
+  const subtype = sys.baseItem ?? sys.type?.value ?? '';
+  const rarity = sys.rarity ?? '';
+  const ammoType = sys.ammoType ?? '';
+  return [itemLike.type, itemLike.name, itemLike.img, subtype, rarity, ammoType].join('|');
+}
+
+// Диалог запроса количества для перемещения стека
+async function promptForQuantity({ title = '', max = 1 } = {}) {
+  return new Promise((resolve) => {
+    const content = `
+      <form class="cis-qty-dialog">
+        <div class="form-group">
+          <label>${game.i18n.localize('DND5E.Quantity')}</label>
+          <input type="number" name="qty" min="1" max="${max}" value="${max}" style="width: 5rem;" />
+        </div>
+        <div class="form-group">
+          <input type="range" name="qty-range" min="1" max="${max}" step="1" value="${max}" />
+        </div>
+      </form>
+    `;
+    const titleText = `${game.i18n.localize('CUSTOM_SECTIONS.SplitQuantity')}: ${title}`;
+    new Dialog({
+      title: titleText,
+      content,
+      buttons: {
+        ok: {
+          label: game.i18n.localize('OK'),
+          callback: (html) => {
+            const val = Number(html.find('input[name="qty"]').val());
+            const clamped = Math.max(1, Math.min(max, Math.floor(val || 0)));
+            resolve(clamped);
+          }
+        },
+        all: {
+          label: game.i18n.localize('CUSTOM_SECTIONS.All'),
+          callback: () => resolve(max)
+        },
+        cancel: { label: game.i18n.localize('Cancel'), callback: () => resolve(0) }
+      },
+      default: 'ok',
+      render: (html) => {
+        const $num = html.find('input[name="qty"]');
+        const $rng = html.find('input[name="qty-range"]');
+        const sync = (val) => {
+          const v = Math.max(1, Math.min(max, Math.floor(Number(val) || 0)));
+          $num.val(v);
+          $rng.val(v);
+        };
+        $rng.on('input change', () => sync($rng.val()));
+        $num.on('input change', () => sync($num.val()));
+      }
+    }).render(true);
   });
 }
 

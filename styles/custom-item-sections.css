@@ -128,4 +128,44 @@
 :is(#tooltip, .locked-tooltip).item-tooltip .header .bottom {
   color: #E8D488;
 }
+
+/* --- Inline панель содержимого контейнера --- */
+.cis-container-contents {
+  margin: 0.25rem 0 0.5rem 0;
+  padding: 0.5rem;
+  border-left: none;
+}
+.cis-container-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+  padding: 0 0.25rem;
+}
+.cis-container-header .spacer { flex: 1; }
+.cis-container-header .hint { opacity: 0.7; font-size: 0.85em; }
+.cis-container-group + .cis-container-group { margin-top: 0.5rem; }
+.cis-container-group-header h5 {
+  margin: 0 0 0.25rem 0;
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.cis-container-empty {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* Диалог выбора количества */
+.cis-qty-dialog .form-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.cis-qty-dialog .form-group + .form-group { margin-top: 0.5rem; }
+.cis-qty-dialog input[type="number"] { width: 5rem; }
+.cis-qty-dialog input[type="range"] {
+  width: 100%;
+  height: 18px;
+  cursor: pointer;
+}
  
