@@ -34,6 +34,9 @@ Hooks.once('init', () => {
   
   // Добавляем глобальные обработчики для блокировки редактирования количества
   setupInventoryControlHandlers();
+
+  // Стабилизация прокрутки листов актёров DnD5e, чтобы окно не "дёргалось" при переносе предметов
+  installScrollStabilizer();
 });
 
 // Функция настройки обработчиков контроля инвентаря
@@ -97,6 +100,89 @@ function registerSettings() {
     type: Boolean,
     default: true
   });
+}
+
+// Устанавливает стабилизацию прокрутки листов актёров, оборачивая их _render
+function installScrollStabilizer() {
+  // Только для системы dnd5e
+  if (game.system?.id !== 'dnd5e') return;
+
+  // Обёртка, сохраняющая и восстанавливающая scrollTop для ключевых контейнеров
+  const wrapImpl = function(inner) {
+    return async function(force, options) {
+      try {
+        // Сохраняем текущие позиции прокрутки
+        const rootBefore = this?.element?.[0] ?? null;
+        const configured = Array.isArray(this?.options?.scrollY) ? this.options.scrollY : [];
+        const extraSelectors = [
+          // На случай старых/новых листов и разных разметок
+          '.items-list',
+          '.inventory-list',
+          '.effects-list',
+          'dnd5e-inventory .inventory-list',
+          'dnd5e-effects .effects-list',
+          '.center-pane',
+          '.sheet-body'
+        ];
+        const selectors = Array.from(new Set([...configured, ...extraSelectors]));
+        const saved = new Map();
+        if (rootBefore && selectors.length) {
+          for (const selector of selectors) {
+            const scroller = rootBefore.querySelector(selector);
+            if (scroller && typeof scroller.scrollTop === 'number') {
+              saved.set(selector, scroller.scrollTop);
+            }
+          }
+        }
+
+        // Рендер по-обычному
+        const result = await inner.call(this, force, options);
+
+        // Восстанавливаем прокрутку на новом DOM
+        const rootAfter = this?.element?.[0] ?? null;
+        if (rootAfter && saved.size) {
+          const applyScroll = () => {
+            for (const [selector, top] of saved) {
+              const scroller = rootAfter.querySelector(selector);
+              if (scroller && typeof top === 'number') scroller.scrollTop = top;
+            }
+          };
+          // Сейчас, на следующий кадр и микротаск — чтобы перекрыть поздние сдвиги верстки
+          applyScroll();
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
+          setTimeout(applyScroll, 0);
+        }
+
+        return result;
+      } catch (err) {
+        console.warn(`${MODULE_ID} | scroll stabilizer failed`, err);
+        return inner.call(this, force, options);
+      }
+    };
+  };
+
+  // Предпочитаем libWrapper, при отсутствии — мягкий монки-патч
+  if (globalThis.libWrapper?.register) {
+    try {
+      libWrapper.register(MODULE_ID, 'ActorSheet.prototype._render', function(wrapper, force, options) {
+        const wrapped = wrapImpl(wrapper.bind(this));
+        return wrapped.call(this, force, options);
+      }, 'MIXED');
+      console.log(`${MODULE_ID} | Scroll stabilizer installed via libWrapper`);
+      return;
+    } catch (e) {
+      console.warn(`${MODULE_ID} | libWrapper register failed, falling back`, e);
+    }
+  }
+
+  // Fallback: монки-патчим прототип ActorSheet
+  const proto = globalThis.ActorSheet?.prototype;
+  if (proto && !proto.__cisScrollWrapped) {
+    const original = proto._render;
+    proto._render = wrapImpl(original);
+    Object.defineProperty(proto, '__cisScrollWrapped', { value: true, enumerable: false, configurable: false });
+    console.log(`${MODULE_ID} | Scroll stabilizer installed (fallback)`);
+  }
 }
 
 // Добавляем поле Section в листы предметов
