@@ -25,12 +25,6 @@
       "path": "lang/ru.json"
     }
   ],
-  "systems": [
-    {
-      "id": "dnd5e",
-      "manifest": "https://raw.githubusercontent.com/foundryvtt/dnd5e/master/system.json"
-    }
-  ],
   "manifest": "https://raw.githubusercontent.com/MrKOOKE/custom-item-sections/main/module.json",
   "download": "https://github.com/MrKOOKE/custom-item-sections/releases/latest/download/custom-item-sections.zip"
 } 
