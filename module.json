@@ -9,7 +9,7 @@
     "maximum": "12"
   },
   "authors": [{
-    "name": "Custom Module Developer"
+    "name": "MrKOOKE"
   }],
   "esmodules": ["scripts/custom-item-sections.js"],
   "styles": ["styles/custom-item-sections.css"],
