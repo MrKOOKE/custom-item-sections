@@ -9,7 +9,7 @@
     "maximum": "12"
   },
   "authors": [{
-    "name": "Custom Module Developer"
+    "name": "MrKOOKE"
   }],
   "esmodules": ["scripts/custom-item-sections.js"],
   "styles": ["styles/custom-item-sections.css"],
@@ -25,6 +25,6 @@
       "path": "lang/ru.json"
     }
   ],
-  "manifest": "https://raw.githubusercontent.com/MrKOOKE/custom-item-sections/refs/heads/main/module.json",
+  "manifest": "https://raw.githubusercontent.com/MrKOOKE/custom-item-sections/main/module.json",
   "download": "https://github.com/MrKOOKE/custom-item-sections/releases/latest/download/custom-item-sections.zip"
 } 
