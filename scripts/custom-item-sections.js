@@ -1,8 +1,19 @@
 // Константы модуля
 const MODULE_ID = 'custom-item-sections';
 const FLAGS = {
-  SECTION: 'section'
+  SECTION: 'section',
+  WEIGHT_REDUCTION: 'contentWeightReduction',
+  CATEGORY_MODE: 'categoryMode', // 'allow' | 'deny'
+  CATEGORY_LIST: 'categoryList'
 };
+
+// Управление логированием: по умолчанию тихо; включается настройкой 'debugLogs'
+function logDebug(message, ...args) {
+  try {
+    if (!game?.settings?.get?.(MODULE_ID, 'debugLogs')) return;
+  } catch (_) { return; }
+  console.debug(`${MODULE_ID} | ${message}`, ...args);
+}
 
 // Храним раскрытые контейнеры в рамках сессии (по актеру)
 const expandedContainersByActor = new Map();
@@ -19,6 +30,8 @@ function localizeSafe(key, fallback) {
 }
 // Чтобы не дублировать обработчики на одних и тех же DOM-зонах
 const wiredDropZones = new WeakSet();
+// Сохранённые позиции прокрутки для листов предметов (по ID предмета)
+const savedItemSheetScroll = new Map();
 
 function getExpandedContainersForActor(actorId) {
   if (!expandedContainersByActor.has(actorId)) expandedContainersByActor.set(actorId, new Set());
@@ -27,7 +40,7 @@ function getExpandedContainersForActor(actorId) {
 
 // Инициализация модуля
 Hooks.once('init', () => {
-  console.log(`${MODULE_ID} | Инициализация модуля Custom Item Sections`);
+  logDebug('Инициализация модуля Custom Item Sections');
   
   // Регистрируем настройки, если необходимо
   registerSettings();
@@ -37,6 +50,22 @@ Hooks.once('init', () => {
 
   // Стабилизация прокрутки листов актёров DnD5e, чтобы окно не "дёргалось" при переносе предметов
   installScrollStabilizer();
+
+  // Патч логики веса контейнера ставим на init — чтобы сработало до первого пересчёта энкамбранса
+  try {
+    installContainerWeightReductionPatch();
+  } catch (e) {
+    console.warn(`${MODULE_ID} | early patch failed`, e);
+  }
+});
+
+// Дублируем установку патча на стадии setup, чтобы гарантировать наличие моделей данных dnd5e до первого prepareData
+Hooks.once('setup', () => {
+  try {
+    installContainerWeightReductionPatch();
+  } catch (e) {
+    console.warn(`${MODULE_ID} | setup patch failed`, e);
+  }
 });
 
 // Функция настройки обработчиков контроля инвентаря
@@ -100,6 +129,16 @@ function registerSettings() {
     type: Boolean,
     default: true
   });
+
+  // Скрытая настройка для детализированных логов
+  game.settings.register(MODULE_ID, 'debugLogs', {
+    name: 'Debug logging',
+    hint: 'Write verbose debug logs to the console',
+    scope: 'client',
+    config: false,
+    type: Boolean,
+    default: false
+  });
 }
 
 // Устанавливает стабилизацию прокрутки листов актёров, оборачивая их _render
@@ -116,16 +155,19 @@ function installScrollStabilizer() {
         const configured = Array.isArray(this?.options?.scrollY) ? this.options.scrollY : [];
         const extraSelectors = [
           // На случай старых/новых листов и разных разметок
+          '.window-content',
           '.items-list',
           '.inventory-list',
           '.effects-list',
           'dnd5e-inventory .inventory-list',
           'dnd5e-effects .effects-list',
+          '.form-body',
           '.center-pane',
           '.sheet-body'
         ];
         const selectors = Array.from(new Set([...configured, ...extraSelectors]));
         const saved = new Map();
+        const prevSize = { width: this?.position?.width, height: this?.position?.height };
         if (rootBefore && selectors.length) {
           for (const selector of selectors) {
             const scroller = rootBefore.querySelector(selector);
@@ -141,7 +183,7 @@ function installScrollStabilizer() {
         // Восстанавливаем прокрутку на новом DOM
         const rootAfter = this?.element?.[0] ?? null;
         if (rootAfter && saved.size) {
-          const applyScroll = () => {
+      const applyScroll = () => {
             for (const [selector, top] of saved) {
               const scroller = rootAfter.querySelector(selector);
               if (scroller && typeof top === 'number') scroller.scrollTop = top;
@@ -151,7 +193,15 @@ function installScrollStabilizer() {
           applyScroll();
           if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
           setTimeout(applyScroll, 0);
+      // И ещё раз после микрозадержки, на случай асинхронных вставок
+      setTimeout(applyScroll, 50);
         }
+
+        // Восстанавливаем размер окна (предотвращает «сжатие» при ререндере форм)
+        try {
+          const h = Number(prevSize.height);
+          if (Number.isFinite(h) && h > 0) this.setPosition({ height: h });
+        } catch (_) { /* ignore */ }
 
         return result;
       } catch (err) {
@@ -168,7 +218,11 @@ function installScrollStabilizer() {
         const wrapped = wrapImpl(wrapper.bind(this));
         return wrapped.call(this, force, options);
       }, 'MIXED');
-      console.log(`${MODULE_ID} | Scroll stabilizer installed via libWrapper`);
+      libWrapper.register(MODULE_ID, 'ItemSheet.prototype._render', function(wrapper, force, options) {
+        const wrapped = wrapImpl(wrapper.bind(this));
+        return wrapped.call(this, force, options);
+      }, 'MIXED');
+      logDebug('Scroll stabilizer installed via libWrapper');
       return;
     } catch (e) {
       console.warn(`${MODULE_ID} | libWrapper register failed, falling back`, e);
@@ -181,7 +235,15 @@ function installScrollStabilizer() {
     const original = proto._render;
     proto._render = wrapImpl(original);
     Object.defineProperty(proto, '__cisScrollWrapped', { value: true, enumerable: false, configurable: false });
-    console.log(`${MODULE_ID} | Scroll stabilizer installed (fallback)`);
+    logDebug('Scroll stabilizer installed (fallback)');
+  }
+
+  // Fallback: ItemSheet
+  const iproto = globalThis.ItemSheet?.prototype;
+  if (iproto && !iproto.__cisScrollWrapped) {
+    const original = iproto._render;
+    iproto._render = wrapImpl(original);
+    Object.defineProperty(iproto, '__cisScrollWrapped', { value: true, enumerable: false, configurable: false });
   }
 }
 
@@ -191,7 +253,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
   if (!game.settings.get(MODULE_ID, 'enableCustomSections')) return;
   if (game.system.id !== 'dnd5e') return;
 
-  console.log(`${MODULE_ID} | Adding section field to item ${app.object.name}`);
+  logDebug(`Adding section field to item ${app.object.name}`);
 
   // Получаем текущее значение section из флагов
   const section = app.object.getFlag(MODULE_ID, FLAGS.SECTION) || '';
@@ -213,7 +275,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
   
   // Добавляем поле в начало вкладки Details или в конец формы
   if (detailsTab.length) {
-    console.log(`${MODULE_ID} | Found details tab, adding field after form header`);
+    logDebug('Found details tab, adding field after form header');
     // Ищем первый form-header и вставляем после него
     const formHeader = detailsTab.find('.form-header').first();
     if (formHeader.length) {
@@ -222,7 +284,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
       detailsTab.prepend(sectionFieldHtml);
     }
   } else {
-    console.log(`${MODULE_ID} | No details tab found, adding to alternative location`);
+    logDebug('No details tab found, adding to alternative location');
     // Альтернативное размещение для других типов предметов
     const formGroups = targetElement.find('.form-group');
     if (formGroups.length) {
@@ -232,8 +294,147 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
     }
   }
   
-  // Устанавливаем высоту приложения для корректного отображения
-  app.setPosition(app.position);
+  // Не меняем размеры окна дополнительным вызовом setPosition, чтобы не прыгал скролл
+
+  // Доп. опции контейнера: снижение нагрузки содержимого
+  try {
+    if (app.object?.type === 'container') {
+      const detailsTab = html.find('.tab.details');
+      const containerOptionsRoot = detailsTab.length ? detailsTab : html.find('.sheet-body');
+      const current = Number(app.object.getFlag(MODULE_ID, FLAGS.WEIGHT_REDUCTION) ?? 0) || 0;
+
+      const reductionFieldHtml = `
+        <div class="form-group">
+          <label>${game.i18n.localize('CUSTOM_SECTIONS.ContentWeightReduction')}</label>
+          <div class="form-fields" style="gap: 0.5rem; align-items: center;">
+            <input type="range" class="cis-wr-slider" min="0" max="100" step="1" value="${current}" aria-label="${game.i18n.localize('CUSTOM_SECTIONS.ContentWeightReduction')}" />
+            <input type="number" class="cis-wr-input" name="flags.${MODULE_ID}.${FLAGS.WEIGHT_REDUCTION}" min="0" max="100" step="1" value="${current}" style="width: 5rem;"/>
+            <span>%</span>
+          </div>
+          <p class="notes">${game.i18n.localize('CUSTOM_SECTIONS.ContentWeightReductionHint')}</p>
+        </div>`;
+
+      // Вставляем сразу после блока свойств контейнера, если он есть, иначе в конец вкладки
+      const afterEl = containerOptionsRoot.find('.container-properties').last();
+      if (afterEl.length) afterEl.after(reductionFieldHtml);
+      else containerOptionsRoot.append(reductionFieldHtml);
+
+      // Синхронизация ползунка и числового ввода
+      const $slider = containerOptionsRoot.find('.cis-wr-slider');
+      const $input  = containerOptionsRoot.find('.cis-wr-input');
+      $slider.attr('data-edit', false);
+      $input.attr('data-edit', false);
+
+      const clamp = (n) => Math.max(0, Math.min(100, Math.floor(Number(n) || 0)));
+      $slider.on('input change', (ev) => {
+        const v = clamp(ev.currentTarget.value);
+        $input.val(v);
+        // Не сохраняем каждое движение ползунка в документ, но при потере фокуса — сохраняем
+      });
+      $input.on('input', (ev) => {
+        const v = clamp(ev.currentTarget.value);
+        $input.val(v);
+        $slider.val(v);
+      }).on('change', async () => {
+        try {
+          const val = clamp($input.val());
+          await app.object.setFlag(MODULE_ID, FLAGS.WEIGHT_REDUCTION, val);
+        } catch (_) { /* ignore */ }
+      });
+
+      // БЛОК: фильтр категорий для содержимого контейнера
+      const mode = app.object.getFlag(MODULE_ID, FLAGS.CATEGORY_MODE) || 'allow';
+      const list = Array.isArray(app.object.getFlag(MODULE_ID, FLAGS.CATEGORY_LIST))
+        ? app.object.getFlag(MODULE_ID, FLAGS.CATEGORY_LIST) : [];
+
+      // Безопасный экранировщик
+      const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      const renderRow = (value='') => `
+        <div class="cis-cat-row" style="display:flex; gap:6px; align-items:center; margin-top:4px;">
+          <input type="text" class="cis-cat-input" value="${esc(value)}" placeholder="${game.i18n.localize('CUSTOM_SECTIONS.CategoryName')}"/>
+          <a class="cis-cat-add" role="button" aria-label="+"><i class="fas fa-plus"></i></a>
+          <a class="cis-cat-del" role="button" aria-label="-"><i class="fas fa-trash"></i></a>
+        </div>`;
+
+      const categoryFieldHtml = `
+        <div class="form-group stacked cis-category-filter">
+          <label>${game.i18n.localize('CUSTOM_SECTIONS.CategoryFilter')}</label>
+          <div class="form-fields" style="gap:0.5rem; align-items:center;">
+            <select class="cis-cat-mode">
+              <option value="allow" ${mode === 'allow' ? 'selected' : ''}>${game.i18n.localize('CUSTOM_SECTIONS.CategoryModeAllow')}</option>
+              <option value="deny" ${mode === 'deny' ? 'selected' : ''}>${game.i18n.localize('CUSTOM_SECTIONS.CategoryModeDeny')}</option>
+            </select>
+          </div>
+          <div class="cis-cat-list">
+            ${list.length ? list.map(v => renderRow(v)).join('') : renderRow('')}
+          </div>
+          <p class="notes">${game.i18n.localize('CUSTOM_SECTIONS.CategoryFilterHint')}</p>
+        </div>`;
+
+      const afterWR = containerOptionsRoot.find('.cis-wr-input').closest('.form-group');
+      if (afterWR.length) afterWR.after(categoryFieldHtml); else containerOptionsRoot.append(categoryFieldHtml);
+
+      // Предотвращаем потерю фокуса при внутр. рендерах: помечаем поле как игнорируемое системой авто-обновления
+      containerOptionsRoot.find('.cis-cat-input').attr('data-edit', false);
+
+      const $mode = containerOptionsRoot.find('.cis-cat-mode');
+      const $list = containerOptionsRoot.find('.cis-cat-list');
+
+      const readValues = () => $list.find('.cis-cat-input').map((_, el) => String(el.value || '').trim()).get()
+        .filter(v => v.length > 0);
+      const persist = async () => {
+        try {
+          await app.object.setFlag(MODULE_ID, FLAGS.CATEGORY_MODE, String($mode.val() || 'allow'));
+          await app.object.setFlag(MODULE_ID, FLAGS.CATEGORY_LIST, readValues());
+        } catch (e) { /* ignore */ }
+      };
+      $mode.on('change', persist);
+      $list.on('click', '.cis-cat-add', async (ev) => {
+        ev.preventDefault();
+        const $row = $(renderRow(''));
+        $list.append($row);
+      });
+      $list.on('click', '.cis-cat-del', async (ev) => {
+        ev.preventDefault();
+        const row = ev.currentTarget.closest('.cis-cat-row');
+        if (row) row.remove();
+        await persist();
+      });
+      // Сохраняем только по потере фокуса/изменению, а не при каждом вводе символа
+      $list.on('change blur', '.cis-cat-input', async () => { await persist(); });
+    }
+  } catch (e) {
+    console.warn(`${MODULE_ID} | Failed to inject container reduction controls`, e);
+  }
+
+  // ЛОКАЛЬНАЯ СТАБИЛИЗАЦИЯ ПРОКРУТКИ ДЛЯ ЛИСТА ПРЕДМЕТА
+  try {
+    const root = html?.[0];
+    if (root) {
+      const candidates = [
+        root.querySelector('.tab.details'),
+        root.querySelector('.sheet-body'),
+        root.querySelector('.window-content')
+      ].filter(Boolean);
+      const scroller = candidates.find(el => (el.scrollHeight - el.clientHeight) > 0) || candidates[0];
+      if (scroller) {
+        // Восстановить ранее сохранённый скролл
+        const key = app.object?.id || app.object?.uuid || app.appId;
+        const top = savedItemSheetScroll.get(key);
+        if (typeof top === 'number') {
+          const apply = () => { try { scroller.scrollTop = top; } catch (_) {} };
+          apply();
+          if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+          setTimeout(apply, 0);
+          setTimeout(apply, 50);
+        }
+        // Обновлять сохранённую позицию при прокрутке
+        scroller.addEventListener('scroll', () => {
+          try { savedItemSheetScroll.set(key, scroller.scrollTop); } catch (_) {}
+        }, { passive: true });
+      }
+    }
+  } catch (_) { /* ignore */ }
 });
 
 // Подключаемся к хукам рендеринга конкретных листов dnd5e
@@ -300,8 +501,8 @@ function processCustomSections(app, html, data) {
   // Проверяем, включен ли модуль
   if (!game.settings.get(MODULE_ID, 'enableCustomSections')) return;
   
-  console.log(`${MODULE_ID} | Processing custom sections for actor ${app.actor.name}`);
-  console.log(`${MODULE_ID} | Sheet class: ${app.constructor.name}`);
+  logDebug(`Processing custom sections for actor ${app.actor.name}`);
+  logDebug(`Sheet class: ${app.constructor.name}`);
   
   // Добавляем кастомные секции в DOM для каждой вкладки
   addCustomSectionsToDOM(app, html, data);
@@ -393,7 +594,15 @@ function applyGridInventory(app, html) {
       await toggleInlineContainer(app, html, li, item);
       return;
     }
-    await item.use();
+    // Если кликаем внутри нативного элемента инвентаря — делегируем системному обработчику
+    const invEl = event.currentTarget.closest('dnd5e-inventory');
+    if (invEl && typeof invEl._onAction === 'function') {
+      event.preventDefault();
+      event.stopPropagation();
+      await invEl._onAction(event.currentTarget, 'use');
+      return;
+    }
+    await item.use({}, { event });
   });
 
   // DnD: делегированные обработчики для стандартных секций (сеточные плитки)
@@ -487,7 +696,7 @@ function addCustomSectionsToDOM(app, html, data) {
     
     // Проверяем, что customSectionName является строкой и не пустая после trim
     if (customSectionName && typeof customSectionName === 'string' && customSectionName.trim()) {
-      console.log(`${MODULE_ID} | Found item "${item.name}" with custom section "${customSectionName}" in tab "${itemTab}"`);
+      logDebug(`Found item "${item.name}" with custom section "${customSectionName}" in tab "${itemTab}"`);
       
       if (!tabSections[itemTab].has(customSectionName)) {
         tabSections[itemTab].set(customSectionName, []);
@@ -500,12 +709,12 @@ function addCustomSectionsToDOM(app, html, data) {
   Object.entries(tabSections).forEach(([tabName, customSections]) => {
     if (customSections.size === 0) return;
     
-    console.log(`${MODULE_ID} | Processing ${customSections.size} custom sections for tab "${tabName}"`);
+    logDebug(`Processing ${customSections.size} custom sections for tab "${tabName}"`);
     
     // Находим контейнер для соответствующей вкладки
     const tabContainer = findTabContainer(html, tabName);
     if (!tabContainer) {
-      console.log(`${MODULE_ID} | Tab container not found for "${tabName}"`);
+      logDebug(`Tab container not found for "${tabName}"`);
       return;
     }
     
@@ -514,7 +723,7 @@ function addCustomSectionsToDOM(app, html, data) {
       items.forEach(item => {
         const itemElement = html.find(`[data-item-id="${item.id}"]`);
         if (itemElement.length) {
-          console.log(`${MODULE_ID} | Removing item "${item.name}" from standard section in tab "${tabName}"`);
+          logDebug(`Removing item "${item.name}" from standard section in tab "${tabName}"`);
           itemElement.remove();
         }
       });
@@ -527,7 +736,7 @@ function addCustomSectionsToDOM(app, html, data) {
       
       // Если в секции нет предметов, скрываем её
       if (itemList.length === 0) {
-        console.log(`${MODULE_ID} | Hiding empty section: ${section.find('.item-name').text().trim()}`);
+        logDebug(`Hiding empty section: ${section.find('.item-name').text().trim()}`);
         section.hide();
       }
     });
@@ -537,7 +746,7 @@ function addCustomSectionsToDOM(app, html, data) {
     
     sortedSectionNames.forEach(sectionName => {
       const items = customSections.get(sectionName);
-      console.log(`${MODULE_ID} | Creating custom section "${sectionName}" with ${items.length} items in tab "${tabName}"`);
+      logDebug(`Creating custom section "${sectionName}" with ${items.length} items in tab "${tabName}"`);
       
       const sectionHtml = createCustomSection(sectionName, items, app, data, tabName);
       tabContainer.append(sectionHtml);
@@ -973,7 +1182,7 @@ function attachCustomSectionEventHandlers(html, app) {
     const value = Number(event.currentTarget.value);
     const item = app.actor.items.get(itemId);
     if (item) {
-      console.log(`${MODULE_ID} | Updating quantity for item ${item.name} to ${value}`);
+      logDebug(`Updating quantity for item ${item.name} to ${value}`);
       await item.update({ "system.quantity": value });
     }
   });
@@ -984,7 +1193,7 @@ function attachCustomSectionEventHandlers(html, app) {
     const value = Number(event.currentTarget.value);
     const item = app.actor.items.get(itemId);
     if (item) {
-      console.log(`${MODULE_ID} | Updating uses for item ${item.name} to ${value}`);
+      logDebug(`Updating uses for item ${item.name} to ${value}`);
       await item.update({ "system.uses.value": value });
     }
   });
@@ -1007,7 +1216,7 @@ function attachCustomSectionEventHandlers(html, app) {
     if (item) {
       const currentValue = item.system.quantity || 0;
       const newValue = action === 'increase' ? currentValue + 1 : Math.max(0, currentValue - 1);
-      console.log(`${MODULE_ID} | ${action} quantity for item ${item.name} to ${newValue}`);
+      logDebug(`${action} quantity for item ${item.name} to ${newValue}`);
       await item.update({ [property]: newValue });
     }
   });
@@ -1017,7 +1226,7 @@ function attachCustomSectionEventHandlers(html, app) {
     const itemId = $(event.currentTarget).closest('.item').data('item-id');
     const item = app.actor.items.get(itemId);
     if (item) {
-      console.log(`${MODULE_ID} | Opening item sheet for ${item.name}`);
+      logDebug(`Opening item sheet for ${item.name}`);
       item.sheet.render(true);
     }
   });
@@ -1042,7 +1251,15 @@ function attachCustomSectionEventHandlers(html, app) {
       await toggleInlineContainer(app, html, li, item);
       return;
     }
-    await item.use();
+    // Делегируем системному обработчику, если находимся внутри dnd5e-inventory
+    const invEl = event.currentTarget.closest('dnd5e-inventory');
+    if (invEl && typeof invEl._onAction === 'function') {
+      event.preventDefault();
+      event.stopPropagation();
+      await invEl._onAction(event.currentTarget, 'use');
+      return;
+    }
+    await item.use({}, { event });
   });
   
   // Обработчик для удаления предмета
@@ -1050,14 +1267,14 @@ function attachCustomSectionEventHandlers(html, app) {
     const itemId = $(event.currentTarget).closest('.item').data('item-id');
     const item = app.actor.items.get(itemId);
     if (item) {
-      console.log(`${MODULE_ID} | Attempting to delete item ${item.name}`);
+      logDebug(`Attempting to delete item ${item.name}`);
       const confirmed = await Dialog.confirm({
         title: game.i18n.localize("DND5E.ItemDelete"),
         content: `<p>${game.i18n.format("DND5E.ItemDeleteConfirm", {item: item.name})}</p>`
       });
       if (confirmed) {
         await item.delete();
-        console.log(`${MODULE_ID} | Deleted item ${item.name}`);
+        logDebug(`Deleted item ${item.name}`);
       }
     }
   });
@@ -1070,7 +1287,7 @@ function attachCustomSectionEventHandlers(html, app) {
     
     if (item) {
       const isExpanded = itemElement.hasClass('collapsed');
-      console.log(`${MODULE_ID} | Toggling description for item ${item.name}, expanded: ${isExpanded}`);
+      logDebug(`Toggling description for item ${item.name}, expanded: ${isExpanded}`);
       
       // Обновляем класс элемента
       if (isExpanded) {
@@ -1356,8 +1573,19 @@ async function resolveDroppedItem(app, dropData) {
 async function moveItemToContainer(app, droppedItem, containerItem) {
   // Сколько переносить?
   const qty = Number(droppedItem.system?.quantity ?? 1);
-  let amount = qty;
-  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: qty });
+  // Проверка категорий
+  if (!isItemAllowedByCategory(containerItem, droppedItem)) {
+    ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.CategoryReject'));
+    return;
+  }
+  // Ограничение вместимости
+  let maxFit = await computeMaxFittableQuantity(containerItem, droppedItem);
+  if (maxFit <= 0) {
+    ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.CapacityExceeded'));
+    return;
+  }
+  let amount = Math.min(qty, maxFit);
+  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: maxFit });
   if (!amount || amount < 1) return;
 
   if (droppedItem?.parent === app.actor) {
@@ -1513,10 +1741,101 @@ async function promptForQuantity({ title = '', max = 1 } = {}) {
 
 // Логирование для отладки
 Hooks.once('ready', () => {
-  console.log(`${MODULE_ID} | Модуль Custom Item Sections готов к работе`);
+  logDebug('Модуль Custom Item Sections готов к работе');
   
   // Проверяем, что система dnd5e
   if (game.system.id !== 'dnd5e') {
     console.warn(`${MODULE_ID} | Модуль предназначен для системы D&D 5e, текущая система: ${game.system.id}`);
   }
+
+  // На всякий случай дублируем установку патча
+  try { installContainerWeightReductionPatch(); } catch (_) {}
 }); 
+
+// Патч геттера totalWeight для контейнеров: применяет % снижения нагрузки к содержимому
+function installContainerWeightReductionPatch() {
+  const ContainerData = CONFIG?.Item?.dataModels?.container || globalThis?.dnd5e?.dataModels?.item?.ContainerData;
+  const proto = ContainerData?.prototype;
+  if (!proto) return;
+  if (proto.__cisWeightReductionPatched) return;
+
+  const originalDescriptor = Object.getOwnPropertyDescriptor(proto, 'totalWeight');
+
+  Object.defineProperty(proto, 'totalWeight', {
+    configurable: true,
+    get: function totalWeightWithReduction() {
+      try {
+        // Если содержимое без веса — используем нативную логику
+        if (this.properties?.has?.('weightlessContents')) return this.weight?.value ?? 0;
+
+        // Текущее значение снижения в процентах (флаг предмета-контейнера)
+        const percent = Number(this.parent?.getFlag?.(MODULE_ID, FLAGS.WEIGHT_REDUCTION) ?? 0) || 0;
+        const clamped = Math.max(0, Math.min(100, percent));
+        // Работает только если контейнер надет (equipped). Иначе коэффициент 1.
+        const equipped = Boolean(this.parent?.system?.equipped);
+        const factor = equipped ? (1 - (clamped / 100)) : 1;
+
+        const contained = this.contentsWeight;
+        if (contained instanceof Promise) {
+          return contained.then(cw => (this.weight?.value ?? 0) + (cw * factor));
+        }
+        return (this.weight?.value ?? 0) + (contained * factor);
+      } catch (e) {
+        // В случае ошибки — откат к оригинальному поведению
+        if (originalDescriptor?.get) {
+          try { return originalDescriptor.get.call(this); } catch (_) { /* ignore */ }
+        }
+        return (this.weight?.value ?? 0) + (Number(this.contentsWeight) || 0);
+      }
+    }
+  });
+
+  Object.defineProperty(proto, '__cisWeightReductionPatched', { value: true, enumerable: false });
+  logDebug('Container weight reduction patch installed');
+}
+
+// --- Вспомогательные: правила ограничения категорий и вместимости --- //
+
+function getContainerCategoryRule(containerItem) {
+  const mode = containerItem.getFlag(MODULE_ID, FLAGS.CATEGORY_MODE) || 'allow';
+  const list = Array.isArray(containerItem.getFlag(MODULE_ID, FLAGS.CATEGORY_LIST))
+    ? containerItem.getFlag(MODULE_ID, FLAGS.CATEGORY_LIST) : [];
+  return { mode, list: list.map(v => String(v || '').trim().toLowerCase()).filter(Boolean) };
+}
+
+function isItemAllowedByCategory(containerItem, itemLike) {
+  const { mode, list } = getContainerCategoryRule(containerItem);
+  if (!list.length) return true; // Пустой список = без ограничений
+  const section = String(itemLike.getFlag?.(MODULE_ID, FLAGS.SECTION) || '').trim().toLowerCase();
+  const inList = list.includes(section);
+  return mode === 'deny' ? !inList : inList; // deny = все, кроме перечисленных; allow = только перечисленные
+}
+
+async function computeMaxFittableQuantity(containerItem, itemLike) {
+  try {
+    const capacity = containerItem.system?.capacity;
+    if (!capacity) return Number(itemLike.system?.quantity ?? 1);
+    const max = Number(capacity.value ?? Infinity);
+    if (!Number.isFinite(max)) return Number(itemLike.system?.quantity ?? 1);
+
+    if (capacity.type === 'items') {
+      const current = await containerItem.system.contentsCount;
+      const remaining = Math.max(0, Math.floor(max - current));
+      const qty = Number(itemLike.system?.quantity ?? 1);
+      return Math.max(0, Math.min(remaining, qty));
+    }
+
+    // type === 'weight'
+    const units = containerItem.system.weight?.units || (game.settings.get('dnd5e', 'metricWeightUnits') ? 'kg' : 'lb');
+    const current = await containerItem.system.contentsWeight; // без снижения
+    const remainingWeight = Math.max(0, (max - current));
+    const totalItemWeight = itemLike.system?.totalWeightIn?.(units) ?? 0;
+    const qty = Math.max(1, Number(itemLike.system?.quantity ?? 1));
+    const perUnit = qty > 0 ? (totalItemWeight / qty) : totalItemWeight;
+    if (perUnit <= 0) return qty; // Безвесомые предметы
+    return Math.max(0, Math.min(qty, Math.floor(remainingWeight / perUnit)));
+  } catch (e) {
+    console.warn(`${MODULE_ID} | computeMaxFittableQuantity failed`, e);
+    return Number(itemLike.system?.quantity ?? 1);
+  }
+}
