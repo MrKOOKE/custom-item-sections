@@ -17,6 +17,8 @@
     },
     "SplitQuantity": "Split Quantity",
     "All": "All",
+    "NonStackable": "Non-stackable",
+    "NonStackableHint": "If enabled, this item will not merge into a stack even when it is outside the preset non-stackable categories.",
     "ContentWeightReduction": "Contents Weight Reduction",
     "ContentWeightReductionHint": "Items inside this container count with reduced weight by the specified percentage (0–100%). Works only when the container is equipped.",
     "CategoryFilter": "Content Category Filter",

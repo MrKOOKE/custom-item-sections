@@ -2,6 +2,7 @@
 const MODULE_ID = 'custom-item-sections';
 const FLAGS = {
   SECTION: 'section',
+  NON_STACKABLE: 'nonStackable',
   WEIGHT_REDUCTION: 'contentWeightReduction',
   CATEGORY_MODE: 'categoryMode', // 'allow' | 'deny'
   CATEGORY_LIST: 'categoryList'
@@ -257,6 +258,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
 
   // Получаем текущее значение section из флагов
   const section = app.object.getFlag(MODULE_ID, FLAGS.SECTION) || '';
+  const nonStackable = Boolean(app.object.getFlag(MODULE_ID, FLAGS.NON_STACKABLE));
   
   // Находим вкладку Details
   const detailsTab = html.find('.tab.details');
@@ -270,6 +272,13 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
       <label>${game.i18n.localize('CUSTOM_SECTIONS.Section')}</label>
       <input type="text" name="flags.${MODULE_ID}.${FLAGS.SECTION}" value="${section}" 
              placeholder="${game.i18n.localize('CUSTOM_SECTIONS.SectionPlaceholder')}" />
+    </div>
+    <div class="form-group">
+      <label>${game.i18n.localize('CUSTOM_SECTIONS.NonStackable')}</label>
+      <div class="form-fields">
+        <input type="checkbox" class="cis-non-stackable" name="flags.${MODULE_ID}.${FLAGS.NON_STACKABLE}" value="true" data-dtype="Boolean" ${nonStackable ? 'checked' : ''} />
+      </div>
+      <p class="notes">${game.i18n.localize('CUSTOM_SECTIONS.NonStackableHint')}</p>
     </div>
   `;
   
@@ -293,6 +302,14 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
       targetElement.prepend(sectionFieldHtml);
     }
   }
+
+  html.find('.cis-non-stackable').attr('data-edit', false).on('change', async (event) => {
+    try {
+      await app.object.setFlag(MODULE_ID, FLAGS.NON_STACKABLE, event.currentTarget.checked === true);
+    } catch (e) {
+      console.warn(`${MODULE_ID} | Failed to persist non-stackable flag`, e);
+    }
+  });
   
   // Не меняем размеры окна дополнительным вызовом setPosition, чтобы не прыгал скролл
 
@@ -1676,9 +1693,11 @@ async function moveItemToRoot(app, droppedItem) {
 
 // Поиск подходящего стека для слияния в указанной локации (containerId или null)
 function findMergeTarget(actor, sourceItemLike, containerId) {
+  if (isNonStackableItemLike(sourceItemLike)) return null;
   const key = getMergeKey(sourceItemLike);
   return actor.items.find(i => (i.system?.container ?? null) === (containerId ?? null)
     && i.id !== sourceItemLike.id
+    && !isNonStackableItemLike(i)
     && getMergeKey(i) === key);
 }
 
@@ -1688,6 +1707,28 @@ function getMergeKey(itemLike) {
   const rarity = sys.rarity ?? '';
   const ammoType = sys.ammoType ?? '';
   return [itemLike.type, itemLike.name, itemLike.img, subtype, rarity, ammoType].join('|');
+}
+
+function isNonStackableItemLike(itemLike) {
+  const localFlag = foundry.utils.getProperty(itemLike, `flags.${MODULE_ID}.${FLAGS.NON_STACKABLE}`);
+  if (isTruthyFlagValue(localFlag)) return true;
+
+  try {
+    const checker = game?.blok?.UniqueCodeHandler?._isNonStackableItem;
+    if (typeof checker === 'function') return !!checker(itemLike);
+  } catch (_) { /* ignore */ }
+
+  return false;
+}
+
+function isTruthyFlagValue(value) {
+  if (value === true) return true;
+  if (value === 1) return true;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === 'on' || normalized === '1' || normalized === 'yes';
+  }
+  return false;
 }
 
 // Диалог запроса количества для перемещения стека
