@@ -10,10 +10,19 @@
         "Hint": "Allow items to be organized into custom sections in character sheets across different tabs"
       }
       ,
+      "EnableCellInventory": {
+        "Name": "Cell Inventory Mode (10x10)",
+        "Hint": "Replace the inventory list with a 10x10 grid of 100x100 cells. Items can be dragged between cells."
+      }
+      ,
       "EnableGridInventory": {
         "Name": "Grid Inventory View (icons only)",
         "Hint": "Display inventory items as square icon tiles (names/details hidden; shown in tooltip). Applies to both default and custom sections."
       }
+    },
+    "CellInventory": {
+      "GridLabel": "Cell Inventory",
+      "Overflow": "Items outside the grid: {count}"
     },
     "SplitQuantity": "Split Quantity",
     "All": "All",
@@ -29,4 +38,4 @@
     "CategoryReject": "This item is not allowed by the container's category rules.",
     "CapacityExceeded": "Not enough remaining capacity in the container."
   }
-} 
+}

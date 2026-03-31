@@ -1,11 +1,17 @@
 // Константы модуля
 const MODULE_ID = 'custom-item-sections';
+const CELL_INVENTORY = Object.freeze({
+  columns: 10,
+  rows: 10,
+  cellSize: 100
+});
 const FLAGS = {
   SECTION: 'section',
   NON_STACKABLE: 'nonStackable',
   WEIGHT_REDUCTION: 'contentWeightReduction',
   CATEGORY_MODE: 'categoryMode', // 'allow' | 'deny'
-  CATEGORY_LIST: 'categoryList'
+  CATEGORY_LIST: 'categoryList',
+  GRID_POSITION: 'inventoryGridPosition'
 };
 
 // Управление логированием: по умолчанию тихо; включается настройкой 'debugLogs'
@@ -30,6 +36,35 @@ function localizeSafe(key, fallback) {
   return lang.startsWith('ru') ? 'Пусто' : 'Empty';
 }
 // Чтобы не дублировать обработчики на одних и тех же DOM-зонах
+function formatLocalizeSafe(key, data, fallback) {
+  try {
+    if (game.i18n?.has?.(key)) return game.i18n.format(key, data);
+  } catch (_) { /* ignore */ }
+  if (fallback !== undefined) return fallback;
+  return key;
+}
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+function isCellInventoryEnabled() {
+  try {
+    return !!game.settings.get(MODULE_ID, 'enableCellInventory');
+  } catch (_) {
+    return false;
+  }
+}
+function isIconGridInventoryEnabled() {
+  try {
+    return !!game.settings.get(MODULE_ID, 'enableGridInventory');
+  } catch (_) {
+    return false;
+  }
+}
 const wiredDropZones = new WeakSet();
 // Сохранённые позиции прокрутки для листов предметов (по ID предмета)
 const savedItemSheetScroll = new Map();
@@ -122,6 +157,15 @@ function registerSettings() {
   });
 
   // Переключатель сетчатого вида инвентаря
+  game.settings.register(MODULE_ID, 'enableCellInventory', {
+    name: 'CUSTOM_SECTIONS.Settings.EnableCellInventory.Name',
+    hint: 'CUSTOM_SECTIONS.Settings.EnableCellInventory.Hint',
+    scope: 'world',
+    config: true,
+    type: Boolean,
+    default: false
+  });
+
   game.settings.register(MODULE_ID, 'enableGridInventory', {
     name: 'CUSTOM_SECTIONS.Settings.EnableGridInventory.Name',
     hint: 'CUSTOM_SECTIONS.Settings.EnableGridInventory.Hint',
@@ -534,16 +578,21 @@ function processCustomSections(app, html, data) {
     applyQuantityRestrictions(html);
   }
 
-  // Применяем сетчатый вид к стандартным секциям, если включено в настройках
-  applyGridInventory(app, html);
+  if (isCellInventoryEnabled()) {
+    applyCellInventory(app, html);
+  } else {
+    // Применяем сетчатый вид к стандартным секциям, если включено в настройках
+    applyGridInventory(app, html);
 
-  // Восстанавливаем ранее раскрытые контейнеры
-  restoreExpandedContainers(app, html);
+    // Восстанавливаем ранее раскрытые контейнеры
+    restoreExpandedContainers(app, html);
+  }
 }
 
 // Преобразуем стандартные секции dnd5e инвентаря в сетку (без названий), если включено
 function applyGridInventory(app, html) {
-  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
+  if (isCellInventoryEnabled()) return;
+  const gridOn = isIconGridInventoryEnabled();
   if (!gridOn) return;
 
   // Ищем все стандартные секции инвентаря (кроме наших кастомных, у них есть data-custom-section)
@@ -668,6 +717,360 @@ function applyGridInventory(app, html) {
     } catch (e) {
       console.error(`${MODULE_ID} | drop.cis-grid error`, e);
     }
+  });
+}
+
+function getCellInventoryRootItems(actor) {
+  return actor.items.filter(item => !item.system?.container && getItemTab(item) === 'inventory');
+}
+
+function sanitizeCellInventoryPosition(value) {
+  const x = Number(value?.x);
+  const y = Number(value?.y);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
+  if (x < 0 || y < 0) return null;
+  if (x >= CELL_INVENTORY.columns || y >= CELL_INVENTORY.rows) return null;
+  return { x, y };
+}
+
+function getCellInventoryPositionKey(position) {
+  return `${position.x},${position.y}`;
+}
+
+function getStoredCellInventoryPosition(item) {
+  const position = item.getFlag?.(MODULE_ID, FLAGS.GRID_POSITION);
+  return sanitizeCellInventoryPosition(position);
+}
+
+function findNextFreeCellInventoryPosition(occupiedCells) {
+  for (let y = 0; y < CELL_INVENTORY.rows; y += 1) {
+    for (let x = 0; x < CELL_INVENTORY.columns; x += 1) {
+      const position = { x, y };
+      if (!occupiedCells.has(getCellInventoryPositionKey(position))) return position;
+    }
+  }
+  return null;
+}
+
+function buildCellInventoryLayout(items) {
+  const sortedItems = [...items].sort((left, right) => {
+    const leftPosition = getStoredCellInventoryPosition(left);
+    const rightPosition = getStoredCellInventoryPosition(right);
+    if (leftPosition && rightPosition) {
+      return (leftPosition.y - rightPosition.y)
+        || (leftPosition.x - rightPosition.x)
+        || ((left.sort ?? 0) - (right.sort ?? 0))
+        || left.name.localeCompare(right.name, game.i18n.lang);
+    }
+    if (leftPosition) return -1;
+    if (rightPosition) return 1;
+    return ((left.sort ?? 0) - (right.sort ?? 0))
+      || left.name.localeCompare(right.name, game.i18n.lang);
+  });
+
+  const placements = new Map();
+  const occupiedCells = new Map();
+  const pendingItems = [];
+  const overflow = [];
+
+  for (const item of sortedItems) {
+    const position = getStoredCellInventoryPosition(item);
+    if (!position) {
+      pendingItems.push(item);
+      continue;
+    }
+    const key = getCellInventoryPositionKey(position);
+    if (occupiedCells.has(key)) {
+      pendingItems.push(item);
+      continue;
+    }
+    placements.set(item.id, position);
+    occupiedCells.set(key, item);
+  }
+
+  for (const item of pendingItems) {
+    const position = findNextFreeCellInventoryPosition(occupiedCells);
+    if (!position) {
+      overflow.push(item);
+      continue;
+    }
+    const key = getCellInventoryPositionKey(position);
+    placements.set(item.id, position);
+    occupiedCells.set(key, item);
+  }
+
+  return { placements, occupiedCells, overflow };
+}
+
+function createCellInventoryItemHtml(item) {
+  const name = escapeHtml(item.name);
+  const image = escapeHtml(item.img || '');
+  const quantity = Number(item.system?.quantity ?? 1);
+  const quantityLabel = escapeHtml(localizeSafe('DND5E.Quantity', 'Quantity'));
+  const equippedClass = item.system?.equipped ? ' equipped' : '';
+  const containerMarker = item.type === 'container'
+    ? `<span class="cis-cell-inventory-marker" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>`
+    : '';
+
+  return `
+    <div class="item cis-cell-inventory-item${equippedClass}" draggable="true"
+         data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${name}"
+         data-item-sort="${item.sort || 0}" data-item-type="${item.type}">
+      <a class="cis-cell-inventory-tile item-action item-tooltip" role="button" data-action="use" aria-label="${name}">
+        ${containerMarker}
+        <img class="cis-cell-inventory-image" src="${image}" alt="${name}">
+        <span class="cis-cell-inventory-name">${name}</span>
+        ${quantity > 1 ? `<span class="cis-qty" aria-label="${quantityLabel}">${quantity}</span>` : ''}
+      </a>
+    </div>
+  `;
+}
+
+function createCellInventoryHtml(app) {
+  const items = getCellInventoryRootItems(app.actor);
+  const { occupiedCells, overflow } = buildCellInventoryLayout(items);
+  const cells = [];
+
+  for (let y = 0; y < CELL_INVENTORY.rows; y += 1) {
+    for (let x = 0; x < CELL_INVENTORY.columns; x += 1) {
+      const position = { x, y };
+      const key = getCellInventoryPositionKey(position);
+      const item = occupiedCells.get(key);
+      cells.push(`
+        <div class="cis-cell-inventory-cell${item ? ' occupied' : ''}" data-grid-x="${x}" data-grid-y="${y}">
+          ${item ? createCellInventoryItemHtml(item) : ''}
+        </div>
+      `);
+    }
+  }
+
+  const overflowHtml = overflow.length
+    ? `<div class="cis-cell-inventory-overflow">${escapeHtml(formatLocalizeSafe(
+        'CUSTOM_SECTIONS.CellInventory.Overflow',
+        { count: overflow.length },
+        `Overflow: ${overflow.length}`
+      ))}</div>`
+    : '';
+
+  return `
+    <div class="cis-cell-inventory-shell">
+      <div class="cis-cell-inventory-meta">
+        <span class="cis-cell-inventory-label">${escapeHtml(localizeSafe(
+          'CUSTOM_SECTIONS.CellInventory.GridLabel',
+          `Grid ${CELL_INVENTORY.columns}x${CELL_INVENTORY.rows}`
+        ))}</span>
+        <span class="cis-cell-inventory-size">${CELL_INVENTORY.columns}x${CELL_INVENTORY.rows} - ${CELL_INVENTORY.cellSize}px</span>
+      </div>
+      <div class="cis-cell-inventory-scroll">
+        <div class="cis-cell-inventory-grid">
+          ${cells.join('')}
+        </div>
+      </div>
+      ${overflowHtml}
+      <div class="cis-cell-inventory-panels"></div>
+    </div>
+  `;
+}
+
+function clearCellInventoryDragState(root) {
+  root.find('.cis-cell-inventory-item').removeClass('dragging');
+  root.find('.cis-cell-inventory-cell').removeClass('drag-over');
+}
+
+async function renderCellInventoryPanels(app, root) {
+  const panelHost = root.find('.cis-cell-inventory-panels');
+  if (!panelHost.length) return;
+  panelHost.empty();
+
+  const expanded = getExpandedContainersForActor(app.actor.id);
+  if (!expanded.size) return;
+
+  for (const containerId of [...expanded]) {
+    const containerItem = app.actor.items.get(containerId);
+    if (!containerItem || containerItem.type !== 'container' || containerItem.system?.container || getItemTab(containerItem) !== 'inventory') {
+      expanded.delete(containerId);
+      continue;
+    }
+    const panel = await buildContainerContentsPanel(app, containerItem);
+    panel.addClass('cis-cell-inventory-panel');
+    panelHost.append(panel);
+  }
+}
+
+function getDragEventData(event) {
+  try {
+    if (typeof TextEditor?.getDragEventData === 'function') return TextEditor.getDragEventData(event);
+  } catch (_) { /* ignore */ }
+  try {
+    const raw = event?.dataTransfer?.getData('text/plain');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (_) {
+    return null;
+  }
+}
+
+async function moveRootInventoryItemToCell(app, item, position) {
+  const normalized = sanitizeCellInventoryPosition(position);
+  if (!normalized) return;
+
+  const rootItems = getCellInventoryRootItems(app.actor);
+  if (!rootItems.some(rootItem => rootItem.id === item.id)) return;
+
+  const { placements, occupiedCells } = buildCellInventoryLayout(rootItems);
+  const currentPosition = placements.get(item.id);
+  if (currentPosition && getCellInventoryPositionKey(currentPosition) === getCellInventoryPositionKey(normalized)) return;
+
+  const occupyingItem = occupiedCells.get(getCellInventoryPositionKey(normalized));
+  const updates = [{
+    _id: item.id,
+    [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: normalized,
+    'system.container': null
+  }];
+
+  if (occupyingItem && occupyingItem.id !== item.id && currentPosition) {
+    updates.push({
+      _id: occupyingItem.id,
+      [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: currentPosition
+    });
+  }
+
+  await app.actor.updateEmbeddedDocuments('Item', updates);
+}
+
+function applyCellInventory(app, html) {
+  const inventoryTab = html.find('.tab.inventory');
+  if (!inventoryTab.length) return;
+
+  const host = inventoryTab.find('.items-list.inventory-list').first();
+  if (!host.length) return;
+
+  inventoryTab.addClass('cis-cell-inventory-mode');
+  inventoryTab.find('item-list-controls').addClass('cis-cell-inventory-hidden-controls');
+
+  host.addClass('cis-cell-inventory-host');
+  host.empty().append(createCellInventoryHtml(app));
+
+  host.find('.item-tooltip').each((_, element) => {
+    applyItemTooltips(element, app);
+  });
+  renderCellInventoryPanels(app, host).catch(error => {
+    console.error(`${MODULE_ID} | Failed to render cell inventory panels`, error);
+  });
+
+  host.off('.cis-cell-inventory');
+
+  host.on('click.cis-cell-inventory', '.cis-cell-inventory-item .cis-cell-inventory-tile', async (event) => {
+    const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
+    if (!itemElement) return;
+    const item = app.actor.items.get(itemElement.dataset.itemId);
+    if (!item) return;
+
+    if (event.shiftKey && (item.system?.equipped !== undefined)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleEquip(item, itemElement);
+      return;
+    }
+
+    if (item.type === 'container') {
+      event.preventDefault();
+      event.stopPropagation();
+      const expanded = getExpandedContainersForActor(app.actor.id);
+      if (expanded.has(item.id)) expanded.delete(item.id);
+      else expanded.add(item.id);
+      applyCellInventory(app, html);
+      return;
+    }
+
+    const invEl = event.currentTarget.closest('dnd5e-inventory');
+    if (invEl && typeof invEl._onAction === 'function') {
+      event.preventDefault();
+      event.stopPropagation();
+      await invEl._onAction(event.currentTarget, 'use');
+      return;
+    }
+
+    await item.use({}, { event });
+  });
+
+  host.on('dragstart.cis-cell-inventory', '.cis-cell-inventory-item', (event) => {
+    const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
+    if (!itemElement) return;
+    const item = app.actor.items.get(itemElement.dataset.itemId);
+    if (!item) return;
+
+    const dragData = {
+      type: 'Item',
+      id: item.id,
+      uuid: item.uuid,
+      actorId: app.actor.id,
+      actorUuid: app.actor.uuid
+    };
+    const nativeEvent = event.originalEvent ?? event;
+    if (nativeEvent.dataTransfer) {
+      nativeEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+      nativeEvent.dataTransfer.effectAllowed = 'copyMove';
+    }
+    itemElement.classList.add('dragging');
+  });
+
+  host.on('dragend.cis-cell-inventory', '.cis-cell-inventory-item', () => {
+    clearCellInventoryDragState(host);
+  });
+
+  host.on('dragover.cis-cell-inventory', '.cis-cell-inventory-cell', (event) => {
+    event.preventDefault();
+    const nativeEvent = event.originalEvent ?? event;
+    if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = 'move';
+    host.find('.cis-cell-inventory-cell').removeClass('drag-over');
+    event.currentTarget.classList.add('drag-over');
+  });
+
+  host.on('dragleave.cis-cell-inventory', '.cis-cell-inventory-cell', (event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    event.currentTarget.classList.remove('drag-over');
+  });
+
+  host.on('drop.cis-cell-inventory', '.cis-cell-inventory-cell', async (event) => {
+    const nativeEvent = event.originalEvent ?? event;
+    const dropData = getDragEventData(nativeEvent);
+    clearCellInventoryDragState(host);
+    if (!dropData) return;
+
+    const sameActorItem = (dropData.type === 'Item') && (dropData.actorId === app.actor.id);
+    if (!sameActorItem) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (typeof app._onDrop === 'function') {
+        await app._onDrop(nativeEvent);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+
+    const droppedItem = await resolveDroppedItem(app, dropData);
+    if (!droppedItem) return;
+    if (getItemTab(droppedItem) !== 'inventory') return;
+
+    const targetPosition = {
+      x: Number(event.currentTarget.dataset.gridX),
+      y: Number(event.currentTarget.dataset.gridY)
+    };
+
+    if (droppedItem.system?.container) {
+      const droppedId = droppedItem.id;
+      await moveItemToRoot(app, droppedItem);
+      const movedItem = app.actor.items.get(droppedId);
+      if (movedItem && !movedItem.system?.container) {
+        await moveRootInventoryItemToCell(app, movedItem, targetPosition);
+      }
+      return;
+    }
+
+    await moveRootInventoryItemToCell(app, droppedItem, targetPosition);
   });
 }
 
@@ -806,7 +1209,7 @@ function findTabContainer(html, tabName) {
 function createCustomSection(sectionName, items, app, data, tabName) {
   // Определяем структуру заголовка в зависимости от вкладки
   let headerHtml = '';
-  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
+  const gridOn = isIconGridInventoryEnabled() || isCellInventoryEnabled();
   
   if (tabName === 'inventory') {
     if (gridOn) {
@@ -1450,7 +1853,7 @@ async function toggleInlineContainer(app, html, liElement, containerItem) {
 
 // Построить панель содержимого контейнера
 async function buildContainerContentsPanel(app, containerItem) {
-  const gridOn = game.settings.get(MODULE_ID, 'enableGridInventory');
+  const gridOn = isIconGridInventoryEnabled() || isCellInventoryEnabled();
   const contents = await resolveMaybePromise(containerItem.system.contents);
   const items = Array.from(contents?.values?.() ?? []);
 
@@ -1522,8 +1925,10 @@ async function buildContainerContentsPanel(app, containerItem) {
       const dropped = await resolveDroppedItem(app, dropData);
       if (!dropped) return;
       await moveItemToContainer(app, dropped, containerItem);
-      // После изменения содержимого — восстановить обертку/панель, чтобы не уехало позиционирование
-      restoreExpandedContainers(app, $(html[0] ?? app.element));
+      // После изменения содержимого — восстановить представление контейнера в текущем режиме инвентаря
+      const currentHtml = app.element instanceof jQuery ? app.element : $(app.element);
+      if (isCellInventoryEnabled()) applyCellInventory(app, currentHtml);
+      else restoreExpandedContainers(app, currentHtml);
     } catch (err) { /* ignore */ }
   });
 
