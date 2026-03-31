@@ -995,6 +995,50 @@ function buildCellInventoryLayout(items) {
   return { placements, occupiedCells, overflow };
 }
 
+function collectCellInventoryLayoutState(actor) {
+  const items = getCellInventoryRootItems(actor);
+  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items);
+  return { items, placements, occupiedCells, overflow };
+}
+
+function getCellInventoryPlacementState(layoutState, position, size, ignoredIds = new Set()) {
+  const normalized = sanitizeCellInventoryPosition(position, size);
+  if (!normalized) {
+    return {
+      position: null,
+      conflicts: [],
+      isValid: false
+    };
+  }
+
+  const ignored = ignoredIds instanceof Set ? ignoredIds : new Set(ignoredIds ? [ignoredIds].flat() : []);
+  const conflicts = getConflictingCellInventoryItems(layoutState?.occupiedCells ?? new Map(), normalized, size, ignored);
+  return {
+    position: normalized,
+    conflicts,
+    isValid: conflicts.length === 0
+  };
+}
+
+function getCellInventoryDragState(app, nativeEvent, { readDropData = false } = {}) {
+  const shouldReadDropData = readDropData || !activeCellInventoryDrag;
+  const dropData = shouldReadDropData ? getDragEventData(nativeEvent) : null;
+  const ignoredIds = new Set();
+  let dragSize = activeCellInventoryDrag?.size ?? { width: 1, height: 1 };
+
+  if (activeCellInventoryDrag?.actorId === app.actor.id && activeCellInventoryDrag.itemId) {
+    ignoredIds.add(activeCellInventoryDrag.itemId);
+  } else if (dropData?.type === 'Item' && dropData.actorId === app.actor.id) {
+    const actorItem = app.actor.items.get(dropData.id);
+    if (actorItem) {
+      dragSize = getCellInventorySize(actorItem);
+      ignoredIds.add(actorItem.id);
+    }
+  }
+
+  return { dropData, dragSize, ignoredIds };
+}
+
 function createCellInventoryItemHtml(item, placement) {
   const name = escapeHtml(item.name);
   const image = escapeHtml(item.img || '');
@@ -1023,9 +1067,13 @@ function createCellInventoryItemHtml(item, placement) {
   `;
 }
 
-function createCellInventoryHtml(app) {
-  const items = getCellInventoryRootItems(app.actor);
-  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items);
+function createCellInventoryHtml(app, layoutState = null) {
+  const {
+    items,
+    placements,
+    occupiedCells,
+    overflow
+  } = layoutState ?? collectCellInventoryLayoutState(app.actor);
   const cells = [];
   const renderedItems = [];
 
@@ -1061,12 +1109,6 @@ function createCellInventoryHtml(app) {
 
   return `
     <div class="cis-cell-inventory-shell">
-      <div class="cis-cell-inventory-meta">
-        <span class="cis-cell-inventory-label">${escapeHtml(localizeSafe(
-          'CUSTOM_SECTIONS.CellInventory.GridLabel',
-          `Grid ${CELL_INVENTORY.columns}x${CELL_INVENTORY.rows}`
-        ))}</span>
-      </div>
       <div class="cis-cell-inventory-scroll">
         <div class="cis-cell-inventory-grid-stack">
           <div class="cis-cell-inventory-grid cis-cell-inventory-cells">
@@ -1134,25 +1176,21 @@ async function moveRootInventoryItemToCell(app, item, position) {
   const rootItems = getCellInventoryRootItems(app.actor);
   if (!rootItems.some(rootItem => rootItem.id === item.id)) return false;
 
-  const { occupiedCells } = buildCellInventoryLayout(rootItems);
   const storedPosition = getStoredCellInventoryPosition(item);
   if (storedPosition && getCellInventoryPositionKey(storedPosition) === getCellInventoryPositionKey(normalized)) return true;
 
-  const conflictingItems = getConflictingCellInventoryItems(occupiedCells, normalized, size, new Set([item.id]));
-  const updates = [{
-    _id: item.id,
-    [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: normalized,
-    'system.container': null
-  }];
-
-  for (const conflictingItem of conflictingItems) {
-    updates.push({
-      _id: conflictingItem.id,
-      [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: null
-    });
+  const layoutState = collectCellInventoryLayoutState(app.actor);
+  const placementState = getCellInventoryPlacementState(layoutState, normalized, size, new Set([item.id]));
+  if (!placementState.isValid) {
+    warnCellInventoryDoesNotFit();
+    return false;
   }
 
-  await app.actor.updateEmbeddedDocuments('Item', updates);
+  await app.actor.updateEmbeddedDocuments('Item', [{
+    _id: item.id,
+    [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: placementState.position,
+    'system.container': null
+  }]);
   return true;
 }
 
@@ -1160,10 +1198,6 @@ async function createExternalItemAtCell(app, dropData, position, event) {
   try {
     const sourceItem = await Item.implementation.fromDropData(dropData);
     if (!sourceItem) return false;
-    if (!isCellInventoryPositionWithinBounds(position, getCellInventorySize(sourceItem))) {
-      warnCellInventoryDoesNotFit();
-      return false;
-    }
 
     let itemData = sourceItem.toObject ? sourceItem.toObject() : foundry.utils.duplicate(sourceItem);
     if (!itemData) return false;
@@ -1198,11 +1232,24 @@ async function createExternalItemAtCell(app, dropData, position, event) {
     foundry.utils.setProperty(itemData, 'system.container', null);
 
     const mergeTarget = findMergeTarget(app.actor, itemData, null);
+    const itemSize = getCellInventorySize(itemData);
+    const layoutState = collectCellInventoryLayoutState(app.actor);
+    const placementState = getCellInventoryPlacementState(
+      layoutState,
+      position,
+      itemSize,
+      mergeTarget ? new Set([mergeTarget.id]) : new Set()
+    );
+    if (!placementState.isValid) {
+      warnCellInventoryDoesNotFit();
+      return false;
+    }
+
     if (mergeTarget) {
       await mergeTarget.update({
         'system.quantity': Number(mergeTarget.system.quantity ?? 0) + Number(itemData.system.quantity ?? amount)
       });
-      await moveRootInventoryItemToCell(app, mergeTarget, position);
+      await moveRootInventoryItemToCell(app, mergeTarget, placementState.position);
       return true;
     }
 
@@ -1226,7 +1273,7 @@ async function createExternalItemAtCell(app, dropData, position, event) {
       ?? createdItems[0];
     if (!createdRootItem) return false;
 
-    await moveRootInventoryItemToCell(app, createdRootItem, position);
+    await moveRootInventoryItemToCell(app, createdRootItem, placementState.position);
     return true;
   } catch (error) {
     console.error(`${MODULE_ID} | Failed to create external item in cell inventory`, error);
@@ -1245,7 +1292,8 @@ function applyCellInventory(app, html) {
   inventoryTab.find('item-list-controls').addClass('cis-cell-inventory-hidden-controls');
 
   host.addClass('cis-cell-inventory-host');
-  host.empty().append(createCellInventoryHtml(app));
+  const layoutState = collectCellInventoryLayoutState(app.actor);
+  host.empty().append(createCellInventoryHtml(app, layoutState));
 
   host.find('.item-tooltip').each((_, element) => {
     applyItemTooltips(element, app);
@@ -1255,10 +1303,6 @@ function applyCellInventory(app, html) {
   });
 
   host.off('.cis-cell-inventory');
-
-  host.on('pointerdown.cis-cell-inventory mousedown.cis-cell-inventory', '.cis-cell-inventory-item', () => {
-    hideActiveTooltip();
-  });
 
   host.on('click.cis-cell-inventory', '.cis-cell-inventory-item .cis-cell-inventory-tile', async (event) => {
     const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
@@ -1334,17 +1378,11 @@ function applyCellInventory(app, html) {
     event.preventDefault();
     const nativeEvent = event.originalEvent ?? event;
     const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
-    let dragSize = activeCellInventoryDrag?.size ?? { width: 1, height: 1 };
-    if (!activeCellInventoryDrag) {
-      const dropData = getDragEventData(nativeEvent);
-      if (dropData?.type === 'Item' && dropData.actorId === app.actor.id) {
-        const actorItem = app.actor.items.get(dropData.id);
-        if (actorItem) dragSize = getCellInventorySize(actorItem);
-      }
-    }
-    const isValid = !!targetPosition && isCellInventoryPositionWithinBounds(targetPosition, dragSize);
+    const { dragSize, ignoredIds } = getCellInventoryDragState(app, nativeEvent);
+    const placementState = getCellInventoryPlacementState(layoutState, targetPosition, dragSize, ignoredIds);
+    const isValid = placementState.isValid;
     if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = isValid ? 'move' : 'none';
-    setCellInventoryDragTarget(host, targetPosition, dragSize, isValid);
+    setCellInventoryDragTarget(host, placementState.position, dragSize, isValid);
   });
 
   host.on('dragleave.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
@@ -1356,7 +1394,7 @@ function applyCellInventory(app, html) {
     const nativeEvent = event.originalEvent ?? event;
     event.stopImmediatePropagation();
     nativeEvent.stopImmediatePropagation?.();
-    const dropData = getDragEventData(nativeEvent);
+    const { dropData } = getCellInventoryDragState(app, nativeEvent, { readDropData: true });
     clearCellInventoryDragState(host);
     setActiveCellInventoryDrag(null);
     if (!dropData) return;
@@ -1384,7 +1422,13 @@ function applyCellInventory(app, html) {
     const droppedItem = await resolveDroppedItem(app, dropData);
     if (!droppedItem) return;
     if (getItemTab(droppedItem) !== 'inventory') return;
-    if (!isCellInventoryPositionWithinBounds(targetPosition, getCellInventorySize(droppedItem))) {
+    const placementState = getCellInventoryPlacementState(
+      layoutState,
+      targetPosition,
+      getCellInventorySize(droppedItem),
+      new Set([droppedItem.id])
+    );
+    if (!placementState.isValid) {
       warnCellInventoryDoesNotFit();
       return;
     }
@@ -1394,12 +1438,12 @@ function applyCellInventory(app, html) {
       await moveItemToRoot(app, droppedItem);
       const movedItem = app.actor.items.get(droppedId);
       if (movedItem && !movedItem.system?.container) {
-        await moveRootInventoryItemToCell(app, movedItem, targetPosition);
+        await moveRootInventoryItemToCell(app, movedItem, placementState.position);
       }
       return;
     }
 
-    await moveRootInventoryItemToCell(app, droppedItem, targetPosition);
+    await moveRootInventoryItemToCell(app, droppedItem, placementState.position);
   });
 }
 
@@ -2094,8 +2138,6 @@ function wireItemDragDrop(app, $elements) {
     if (!item) return;
     
       element.draggable = true;
-      element.addEventListener('pointerdown', hideActiveTooltip);
-      element.addEventListener('mousedown', hideActiveTooltip);
       element.addEventListener('dragstart', (event) => {
         hideActiveTooltip();
         const dragData = {

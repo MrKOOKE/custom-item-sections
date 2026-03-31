@@ -271,7 +271,7 @@
   box-sizing: border-box;
   min-width: 0;
   min-height: 0;
-  padding: 6px;
+  padding: 4px;
   pointer-events: auto;
 }
 
@@ -281,15 +281,12 @@
 
 .tab.inventory .cis-cell-inventory-tile {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  gap: 4px;
+  display: grid;
+  place-items: center;
   width: 100%;
   height: 100%;
   box-sizing: border-box;
-  padding: 6px 6px 8px;
+  padding: 0;
   border-radius: 8px;
   overflow: hidden;
   border: 1px solid rgba(232, 212, 136, 0.18);
@@ -304,13 +301,22 @@
 }
 
 .tab.inventory .cis-cell-inventory-image {
-  width: calc(72px + (var(--cis-item-span-x, 1) - 1) * 18px);
-  height: calc(72px + (var(--cis-item-span-y, 1) - 1) * 18px);
-  max-width: calc(100% - 12px);
-  max-height: calc(100% - 34px);
-  object-fit: contain;
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  border-radius: inherit;
+  object-fit: cover;
+  object-position: center;
   pointer-events: none;
-  flex: 0 0 auto;
 }
 
 .tab.inventory .cis-cell-inventory-name {
