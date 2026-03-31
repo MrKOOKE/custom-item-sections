@@ -11,7 +11,9 @@ const FLAGS = {
   WEIGHT_REDUCTION: 'contentWeightReduction',
   CATEGORY_MODE: 'categoryMode', // 'allow' | 'deny'
   CATEGORY_LIST: 'categoryList',
-  GRID_POSITION: 'inventoryGridPosition'
+  GRID_POSITION: 'inventoryGridPosition',
+  GRID_SIZE_X: 'inventoryGridSizeX',
+  GRID_SIZE_Y: 'inventoryGridSizeY'
 };
 
 // Управление логированием: по умолчанию тихо; включается настройкой 'debugLogs'
@@ -74,10 +76,30 @@ function hideActiveTooltip() {
 const wiredDropZones = new WeakSet();
 // Сохранённые позиции прокрутки для листов предметов (по ID предмета)
 const savedItemSheetScroll = new Map();
+let activeCellInventoryDrag = null;
+let transparentDragImage = null;
 
 function getExpandedContainersForActor(actorId) {
   if (!expandedContainersByActor.has(actorId)) expandedContainersByActor.set(actorId, new Set());
   return expandedContainersByActor.get(actorId);
+}
+
+function getTransparentDragImage() {
+  if (transparentDragImage) return transparentDragImage;
+  const canvas = document.createElement('canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+  transparentDragImage = canvas;
+  return transparentDragImage;
+}
+
+function setActiveCellInventoryDrag(state) {
+  activeCellInventoryDrag = state ? {
+    actorId: state.actorId ?? null,
+    itemId: state.itemId ?? null,
+    size: sanitizeCellInventorySize(state.size),
+    type: state.type ?? 'Item'
+  } : null;
 }
 
 // Инициализация модуля
@@ -309,6 +331,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
   // Получаем текущее значение section из флагов
   const section = app.object.getFlag(MODULE_ID, FLAGS.SECTION) || '';
   const nonStackable = Boolean(app.object.getFlag(MODULE_ID, FLAGS.NON_STACKABLE));
+  const cellSize = getCellInventorySize(app.object);
   
   // Находим вкладку Details
   const detailsTab = html.find('.tab.details');
@@ -322,6 +345,40 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
       <label>${game.i18n.localize('CUSTOM_SECTIONS.Section')}</label>
       <input type="text" name="flags.${MODULE_ID}.${FLAGS.SECTION}" value="${section}" 
              placeholder="${game.i18n.localize('CUSTOM_SECTIONS.SectionPlaceholder')}" />
+    </div>
+    <div class="form-group">
+      <label>${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.Size')}</label>
+      <div class="form-fields" style="gap: 0.5rem; align-items: center;">
+        <label style="display:flex; align-items:center; gap:0.35rem; margin:0;">
+          <span>${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.SizeX')}</span>
+          <input
+            type="number"
+            class="cis-cell-size-input"
+            name="flags.${MODULE_ID}.${FLAGS.GRID_SIZE_X}"
+            value="${cellSize.width}"
+            min="1"
+            max="${CELL_INVENTORY.columns}"
+            step="1"
+            data-dtype="Number"
+            style="width: 4.5rem;"
+          />
+        </label>
+        <label style="display:flex; align-items:center; gap:0.35rem; margin:0;">
+          <span>${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.SizeY')}</span>
+          <input
+            type="number"
+            class="cis-cell-size-input"
+            name="flags.${MODULE_ID}.${FLAGS.GRID_SIZE_Y}"
+            value="${cellSize.height}"
+            min="1"
+            max="${CELL_INVENTORY.rows}"
+            step="1"
+            data-dtype="Number"
+            style="width: 4.5rem;"
+          />
+        </label>
+      </div>
+      <p class="notes">${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.SizeHint')}</p>
     </div>
     <div class="form-group">
       <label>${game.i18n.localize('CUSTOM_SECTIONS.NonStackable')}</label>
@@ -359,6 +416,11 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
     } catch (e) {
       console.warn(`${MODULE_ID} | Failed to persist non-stackable flag`, e);
     }
+  });
+  html.find('.cis-cell-size-input').attr('data-edit', false).on('change', (event) => {
+    const input = event.currentTarget;
+    const max = input.name.endsWith(FLAGS.GRID_SIZE_X) ? CELL_INVENTORY.columns : CELL_INVENTORY.rows;
+    input.value = Math.max(1, Math.min(max, Math.floor(Number(input.value) || 1)));
   });
   
   // Не меняем размеры окна дополнительным вызовом setPosition, чтобы не прыгал скролл
@@ -735,29 +797,140 @@ function getCellInventoryRootItems(actor) {
   return actor.items.filter(item => !item.system?.container && getItemTab(item) === 'inventory');
 }
 
-function sanitizeCellInventoryPosition(value) {
+function sanitizeCellInventorySize(value) {
+  const width = Math.max(1, Math.min(CELL_INVENTORY.columns, Math.floor(Number(value?.x ?? value?.width ?? 1) || 1)));
+  const height = Math.max(1, Math.min(CELL_INVENTORY.rows, Math.floor(Number(value?.y ?? value?.height ?? 1) || 1)));
+  return { width, height };
+}
+
+function getCellInventorySize(itemLike) {
+  const readFlag = (flag) => {
+    if (typeof itemLike?.getFlag === 'function') return itemLike.getFlag(MODULE_ID, flag);
+    return foundry.utils.getProperty(itemLike, `flags.${MODULE_ID}.${flag}`);
+  };
+
+  return sanitizeCellInventorySize({
+    x: readFlag(FLAGS.GRID_SIZE_X),
+    y: readFlag(FLAGS.GRID_SIZE_Y)
+  });
+}
+
+function isCellInventoryPositionWithinBounds(position, size = { width: 1, height: 1 }) {
+  const x = Number(position?.x);
+  const y = Number(position?.y);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) return false;
+  if (x < 0 || y < 0) return false;
+  if ((x + size.width) > CELL_INVENTORY.columns) return false;
+  if ((y + size.height) > CELL_INVENTORY.rows) return false;
+  return true;
+}
+
+function sanitizeCellInventoryPosition(value, size = { width: 1, height: 1 }) {
   const x = Number(value?.x);
   const y = Number(value?.y);
   if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
-  if (x < 0 || y < 0) return null;
-  if (x >= CELL_INVENTORY.columns || y >= CELL_INVENTORY.rows) return null;
-  return { x, y };
+  const position = { x, y };
+  return isCellInventoryPositionWithinBounds(position, size) ? position : null;
 }
 
 function getCellInventoryPositionKey(position) {
   return `${position.x},${position.y}`;
 }
 
-function getStoredCellInventoryPosition(item) {
-  const position = item.getFlag?.(MODULE_ID, FLAGS.GRID_POSITION);
-  return sanitizeCellInventoryPosition(position);
+function getCellInventoryAreaPositions(position, size, { clamp = false } = {}) {
+  const positions = [];
+  const width = Number(size?.width ?? 1);
+  const height = Number(size?.height ?? 1);
+
+  for (let y = position.y; y < position.y + height; y += 1) {
+    for (let x = position.x; x < position.x + width; x += 1) {
+      if (clamp && ((x < 0) || (y < 0) || (x >= CELL_INVENTORY.columns) || (y >= CELL_INVENTORY.rows))) continue;
+      positions.push({ x, y });
+    }
+  }
+
+  return positions;
 }
 
-function findNextFreeCellInventoryPosition(occupiedCells) {
-  for (let y = 0; y < CELL_INVENTORY.rows; y += 1) {
-    for (let x = 0; x < CELL_INVENTORY.columns; x += 1) {
+function markCellInventoryArea(occupiedCells, item, position, size) {
+  for (const cell of getCellInventoryAreaPositions(position, size)) {
+    occupiedCells.set(getCellInventoryPositionKey(cell), item);
+  }
+}
+
+function getConflictingCellInventoryItems(occupiedCells, position, size, ignoredIds = new Set()) {
+  const conflicts = new Map();
+
+  for (const cell of getCellInventoryAreaPositions(position, size, { clamp: true })) {
+    const item = occupiedCells.get(getCellInventoryPositionKey(cell));
+    if (!item || ignoredIds.has(item.id)) continue;
+    conflicts.set(item.id, item);
+  }
+
+  return [...conflicts.values()];
+}
+
+function warnCellInventoryDoesNotFit() {
+  ui.notifications?.warn?.(localizeSafe(
+    'CUSTOM_SECTIONS.CellInventory.DoesNotFit',
+    'Item does not fit in the selected cells.'
+  ));
+}
+
+function getCellInventoryGridPositionFromEvent(gridElement, event) {
+  const doc = gridElement?.ownerDocument ?? document;
+  const clientX = Number(event?.clientX);
+  const clientY = Number(event?.clientY);
+
+  if (Number.isFinite(clientX) && Number.isFinite(clientY) && typeof doc.elementsFromPoint === 'function') {
+    const elements = doc.elementsFromPoint(clientX, clientY);
+    const cell = elements.find(element => element?.classList?.contains?.('cis-cell-inventory-cell'));
+    if (cell) {
+      return sanitizeCellInventoryPosition({
+        x: Number(cell.dataset.gridX),
+        y: Number(cell.dataset.gridY)
+      });
+    }
+  }
+
+  const rect = gridElement.getBoundingClientRect();
+  const x = Math.floor((clientX - rect.left) / CELL_INVENTORY.cellSize);
+  const y = Math.floor((clientY - rect.top) / CELL_INVENTORY.cellSize);
+  return sanitizeCellInventoryPosition({ x, y });
+}
+
+function setCellInventoryDragTarget(root, position, size, isValid = true) {
+  root.find('.cis-cell-inventory-cell').removeClass('drag-over drag-invalid');
+  const preview = root.find('.cis-cell-inventory-drag-preview');
+  preview.removeClass('active invalid').attr('style', '');
+  if (!position) return;
+
+  const className = isValid ? 'drag-over' : 'drag-invalid';
+  for (const cell of getCellInventoryAreaPositions(position, size, { clamp: true })) {
+    root.find(`.cis-cell-inventory-cell[data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`).addClass(className);
+  }
+
+  if (preview.length) {
+    preview
+      .addClass(`active${isValid ? '' : ' invalid'}`)
+      .attr('style', `grid-column: ${position.x + 1} / span ${size.width}; grid-row: ${position.y + 1} / span ${size.height};`);
+  }
+}
+
+function getStoredCellInventoryPosition(item) {
+  const size = getCellInventorySize(item);
+  const position = item.getFlag?.(MODULE_ID, FLAGS.GRID_POSITION);
+  return sanitizeCellInventoryPosition(position, size);
+}
+
+function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, height: 1 }) {
+  const maxY = CELL_INVENTORY.rows - size.height;
+  const maxX = CELL_INVENTORY.columns - size.width;
+
+  for (let y = 0; y <= maxY; y += 1) {
+    for (let x = 0; x <= maxX; x += 1) {
       const position = { x, y };
-      if (!occupiedCells.has(getCellInventoryPositionKey(position))) return position;
+      if (getConflictingCellInventoryItems(occupiedCells, position, size).length === 0) return position;
     }
   }
   return null;
@@ -785,48 +958,61 @@ function buildCellInventoryLayout(items) {
   const overflow = [];
 
   for (const item of sortedItems) {
+    const size = getCellInventorySize(item);
     const position = getStoredCellInventoryPosition(item);
     if (!position) {
       pendingItems.push(item);
       continue;
     }
-    const key = getCellInventoryPositionKey(position);
-    if (occupiedCells.has(key)) {
+    if (getConflictingCellInventoryItems(occupiedCells, position, size).length) {
       pendingItems.push(item);
       continue;
     }
-    placements.set(item.id, position);
-    occupiedCells.set(key, item);
+    placements.set(item.id, { position, size });
+    markCellInventoryArea(occupiedCells, item, position, size);
   }
 
+  pendingItems.sort((left, right) => {
+    const leftSize = getCellInventorySize(left);
+    const rightSize = getCellInventorySize(right);
+    const areaDiff = (rightSize.width * rightSize.height) - (leftSize.width * leftSize.height);
+    if (areaDiff) return areaDiff;
+    return ((left.sort ?? 0) - (right.sort ?? 0))
+      || left.name.localeCompare(right.name, game.i18n.lang);
+  });
+
   for (const item of pendingItems) {
-    const position = findNextFreeCellInventoryPosition(occupiedCells);
+    const size = getCellInventorySize(item);
+    const position = findNextFreeCellInventoryPosition(occupiedCells, size);
     if (!position) {
       overflow.push(item);
       continue;
     }
-    const key = getCellInventoryPositionKey(position);
-    placements.set(item.id, position);
-    occupiedCells.set(key, item);
+    placements.set(item.id, { position, size });
+    markCellInventoryArea(occupiedCells, item, position, size);
   }
 
   return { placements, occupiedCells, overflow };
 }
 
-function createCellInventoryItemHtml(item) {
+function createCellInventoryItemHtml(item, placement) {
   const name = escapeHtml(item.name);
   const image = escapeHtml(item.img || '');
   const quantity = Number(item.system?.quantity ?? 1);
   const quantityLabel = escapeHtml(localizeSafe('DND5E.Quantity', 'Quantity'));
   const equippedClass = item.system?.equipped ? ' equipped' : '';
+  const { position, size } = placement;
   const containerMarker = item.type === 'container'
     ? `<span class="cis-cell-inventory-marker" aria-hidden="true"><i class="fa-solid fa-box-open"></i></span>`
     : '';
 
   return `
-    <div class="item cis-cell-inventory-item${equippedClass}" draggable="true"
+    <div class="cis-cell-inventory-item${equippedClass}" draggable="true"
          data-item-id="${item.id}" data-entry-id="${item.id}" data-item-name="${name}"
-         data-item-sort="${item.sort || 0}" data-item-type="${item.type}">
+         data-item-sort="${item.sort || 0}" data-item-type="${item.type}"
+         data-grid-x="${position.x}" data-grid-y="${position.y}"
+         data-size-x="${size.width}" data-size-y="${size.height}"
+         style="grid-column: ${position.x + 1} / span ${size.width}; grid-row: ${position.y + 1} / span ${size.height}; --cis-item-span-x: ${size.width}; --cis-item-span-y: ${size.height};">
       <a class="cis-cell-inventory-tile item-action item-tooltip" role="button" data-action="use" aria-label="${name}">
         ${containerMarker}
         <img class="cis-cell-inventory-image" src="${image}" alt="${name}">
@@ -839,8 +1025,9 @@ function createCellInventoryItemHtml(item) {
 
 function createCellInventoryHtml(app) {
   const items = getCellInventoryRootItems(app.actor);
-  const { occupiedCells, overflow } = buildCellInventoryLayout(items);
+  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items);
   const cells = [];
+  const renderedItems = [];
 
   for (let y = 0; y < CELL_INVENTORY.rows; y += 1) {
     for (let x = 0; x < CELL_INVENTORY.columns; x += 1) {
@@ -848,11 +1035,20 @@ function createCellInventoryHtml(app) {
       const key = getCellInventoryPositionKey(position);
       const item = occupiedCells.get(key);
       cells.push(`
-        <div class="cis-cell-inventory-cell${item ? ' occupied' : ''}" data-grid-x="${x}" data-grid-y="${y}">
-          ${item ? createCellInventoryItemHtml(item) : ''}
-        </div>
+        <div
+          class="cis-cell-inventory-cell${item ? ' occupied' : ''}"
+          data-grid-x="${x}"
+          data-grid-y="${y}"
+          style="grid-column: ${x + 1}; grid-row: ${y + 1};"
+        ></div>
       `);
     }
+  }
+
+  for (const item of items) {
+    const placement = placements.get(item.id);
+    if (!placement) continue;
+    renderedItems.push(createCellInventoryItemHtml(item, placement));
   }
 
   const overflowHtml = overflow.length
@@ -872,8 +1068,14 @@ function createCellInventoryHtml(app) {
         ))}</span>
       </div>
       <div class="cis-cell-inventory-scroll">
-        <div class="cis-cell-inventory-grid">
-          ${cells.join('')}
+        <div class="cis-cell-inventory-grid-stack">
+          <div class="cis-cell-inventory-grid cis-cell-inventory-cells">
+            ${cells.join('')}
+          </div>
+          <div class="cis-cell-inventory-grid cis-cell-inventory-items">
+            ${renderedItems.join('')}
+            <div class="cis-cell-inventory-drag-preview" aria-hidden="true"></div>
+          </div>
         </div>
       </div>
       ${overflowHtml}
@@ -884,7 +1086,8 @@ function createCellInventoryHtml(app) {
 
 function clearCellInventoryDragState(root) {
   root.find('.cis-cell-inventory-item').removeClass('dragging');
-  root.find('.cis-cell-inventory-cell').removeClass('drag-over');
+  root.find('.cis-cell-inventory-cell').removeClass('drag-over drag-invalid');
+  root.find('.cis-cell-inventory-drag-preview').removeClass('active invalid').attr('style', '');
 }
 
 async function renderCellInventoryPanels(app, root) {
@@ -921,37 +1124,46 @@ function getDragEventData(event) {
 }
 
 async function moveRootInventoryItemToCell(app, item, position) {
-  const normalized = sanitizeCellInventoryPosition(position);
-  if (!normalized) return;
+  const size = getCellInventorySize(item);
+  const normalized = sanitizeCellInventoryPosition(position, size);
+  if (!normalized) {
+    warnCellInventoryDoesNotFit();
+    return false;
+  }
 
   const rootItems = getCellInventoryRootItems(app.actor);
-  if (!rootItems.some(rootItem => rootItem.id === item.id)) return;
+  if (!rootItems.some(rootItem => rootItem.id === item.id)) return false;
 
-  const { placements, occupiedCells } = buildCellInventoryLayout(rootItems);
-  const currentPosition = placements.get(item.id);
-  if (currentPosition && getCellInventoryPositionKey(currentPosition) === getCellInventoryPositionKey(normalized)) return;
+  const { occupiedCells } = buildCellInventoryLayout(rootItems);
+  const storedPosition = getStoredCellInventoryPosition(item);
+  if (storedPosition && getCellInventoryPositionKey(storedPosition) === getCellInventoryPositionKey(normalized)) return true;
 
-  const occupyingItem = occupiedCells.get(getCellInventoryPositionKey(normalized));
+  const conflictingItems = getConflictingCellInventoryItems(occupiedCells, normalized, size, new Set([item.id]));
   const updates = [{
     _id: item.id,
     [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: normalized,
     'system.container': null
   }];
 
-  if (occupyingItem && occupyingItem.id !== item.id && currentPosition) {
+  for (const conflictingItem of conflictingItems) {
     updates.push({
-      _id: occupyingItem.id,
-      [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: currentPosition
+      _id: conflictingItem.id,
+      [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: null
     });
   }
 
   await app.actor.updateEmbeddedDocuments('Item', updates);
+  return true;
 }
 
 async function createExternalItemAtCell(app, dropData, position, event) {
   try {
     const sourceItem = await Item.implementation.fromDropData(dropData);
     if (!sourceItem) return false;
+    if (!isCellInventoryPositionWithinBounds(position, getCellInventorySize(sourceItem))) {
+      warnCellInventoryDoesNotFit();
+      return false;
+    }
 
     let itemData = sourceItem.toObject ? sourceItem.toObject() : foundry.utils.duplicate(sourceItem);
     if (!itemData) return false;
@@ -1100,39 +1312,57 @@ function applyCellInventory(app, html) {
     if (nativeEvent.dataTransfer) {
       nativeEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
       nativeEvent.dataTransfer.effectAllowed = 'copyMove';
+      try {
+        nativeEvent.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
+      } catch (_) { /* ignore */ }
     }
+    setActiveCellInventoryDrag({
+      actorId: app.actor.id,
+      itemId: item.id,
+      size: getCellInventorySize(item),
+      type: 'Item'
+    });
     itemElement.classList.add('dragging');
   });
 
   host.on('dragend.cis-cell-inventory', '.cis-cell-inventory-item', () => {
     clearCellInventoryDragState(host);
+    setActiveCellInventoryDrag(null);
   });
 
-  host.on('dragover.cis-cell-inventory', '.cis-cell-inventory-cell', (event) => {
+  host.on('dragover.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
     event.preventDefault();
     const nativeEvent = event.originalEvent ?? event;
-    if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = 'move';
-    host.find('.cis-cell-inventory-cell').removeClass('drag-over');
-    event.currentTarget.classList.add('drag-over');
+    const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
+    let dragSize = activeCellInventoryDrag?.size ?? { width: 1, height: 1 };
+    if (!activeCellInventoryDrag) {
+      const dropData = getDragEventData(nativeEvent);
+      if (dropData?.type === 'Item' && dropData.actorId === app.actor.id) {
+        const actorItem = app.actor.items.get(dropData.id);
+        if (actorItem) dragSize = getCellInventorySize(actorItem);
+      }
+    }
+    const isValid = !!targetPosition && isCellInventoryPositionWithinBounds(targetPosition, dragSize);
+    if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = isValid ? 'move' : 'none';
+    setCellInventoryDragTarget(host, targetPosition, dragSize, isValid);
   });
 
-  host.on('dragleave.cis-cell-inventory', '.cis-cell-inventory-cell', (event) => {
+  host.on('dragleave.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
     if (event.currentTarget.contains(event.relatedTarget)) return;
-    event.currentTarget.classList.remove('drag-over');
+    clearCellInventoryDragState(host);
   });
 
-  host.on('drop.cis-cell-inventory', '.cis-cell-inventory-cell', async (event) => {
+  host.on('drop.cis-cell-inventory', '.cis-cell-inventory-grid-stack', async (event) => {
     const nativeEvent = event.originalEvent ?? event;
     event.stopImmediatePropagation();
     nativeEvent.stopImmediatePropagation?.();
     const dropData = getDragEventData(nativeEvent);
     clearCellInventoryDragState(host);
+    setActiveCellInventoryDrag(null);
     if (!dropData) return;
 
-    const targetPosition = {
-      x: Number(event.currentTarget.dataset.gridX),
-      y: Number(event.currentTarget.dataset.gridY)
-    };
+    const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
+    if (!targetPosition) return;
 
     const sameActorItem = (dropData.type === 'Item') && (dropData.actorId === app.actor.id);
     if (!sameActorItem) {
@@ -1154,6 +1384,10 @@ function applyCellInventory(app, html) {
     const droppedItem = await resolveDroppedItem(app, dropData);
     if (!droppedItem) return;
     if (getItemTab(droppedItem) !== 'inventory') return;
+    if (!isCellInventoryPositionWithinBounds(targetPosition, getCellInventorySize(droppedItem))) {
+      warnCellInventoryDoesNotFit();
+      return;
+    }
 
     if (droppedItem.system?.container) {
       const droppedId = droppedItem.id;
@@ -2213,7 +2447,8 @@ function getMergeKey(itemLike) {
   const subtype = sys.baseItem ?? sys.type?.value ?? '';
   const rarity = sys.rarity ?? '';
   const ammoType = sys.ammoType ?? '';
-  return [itemLike.type, itemLike.name, itemLike.img, subtype, rarity, ammoType].join('|');
+  const cellSize = getCellInventorySize(itemLike);
+  return [itemLike.type, itemLike.name, itemLike.img, subtype, rarity, ammoType, cellSize.width, cellSize.height].join('|');
 }
 
 function isNonStackableItemLike(itemLike) {

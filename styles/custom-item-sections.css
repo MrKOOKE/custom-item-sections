@@ -205,12 +205,20 @@
   padding-bottom: 0.25rem;
 }
 
+.tab.inventory .cis-cell-inventory-grid-stack {
+  position: relative;
+  width: max-content;
+}
+
 .tab.inventory .cis-cell-inventory-grid {
   display: grid;
   grid-template-columns: repeat(10, 100px);
   grid-template-rows: repeat(10, 100px);
   gap: 0;
   width: max-content;
+}
+
+.tab.inventory .cis-cell-inventory-cells {
   border: 1px solid rgba(232, 212, 136, 0.25);
   background:
     linear-gradient(rgba(232, 212, 136, 0.06), rgba(232, 212, 136, 0.02)),
@@ -218,8 +226,16 @@
   box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.3);
 }
 
+.tab.inventory .cis-cell-inventory-items {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
 .tab.inventory .cis-cell-inventory-cell {
   position: relative;
+  z-index: 0;
+  box-sizing: border-box;
   width: 100px;
   height: 100px;
   border: 1px solid rgba(232, 212, 136, 0.12);
@@ -236,14 +252,31 @@
   box-shadow: inset 0 0 0 2px #E8D488;
 }
 
+.tab.inventory .cis-cell-inventory-cell.drag-invalid {
+  background: rgba(180, 55, 55, 0.16);
+  box-shadow: inset 0 0 0 2px rgba(223, 98, 98, 0.92);
+}
+
 .tab.inventory .cis-cell-inventory-item {
+  display: block;
+  align-self: stretch;
+  justify-self: stretch;
+  margin: 0;
+  list-style: none;
+  border: 0;
+  background: transparent;
   width: 100%;
   height: 100%;
+  z-index: 2;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 0;
   padding: 6px;
+  pointer-events: auto;
 }
 
 .tab.inventory .cis-cell-inventory-item.dragging {
-  opacity: 0.45;
+  opacity: 0.2;
 }
 
 .tab.inventory .cis-cell-inventory-tile {
@@ -255,6 +288,7 @@
   gap: 4px;
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
   padding: 6px 6px 8px;
   border-radius: 8px;
   overflow: hidden;
@@ -270,23 +304,17 @@
 }
 
 .tab.inventory .cis-cell-inventory-image {
-  width: 72px;
-  height: 72px;
+  width: calc(72px + (var(--cis-item-span-x, 1) - 1) * 18px);
+  height: calc(72px + (var(--cis-item-span-y, 1) - 1) * 18px);
+  max-width: calc(100% - 12px);
+  max-height: calc(100% - 34px);
   object-fit: contain;
   pointer-events: none;
   flex: 0 0 auto;
 }
 
 .tab.inventory .cis-cell-inventory-name {
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 1.1;
-  text-align: center;
-  color: #f4ead0;
-  pointer-events: none;
+  display: none;
 }
 
 .tab.inventory .cis-cell-inventory-marker {
@@ -303,6 +331,27 @@
   color: #E8D488;
   font-size: 11px;
   pointer-events: none;
+}
+
+.tab.inventory .cis-cell-inventory-drag-preview {
+  display: none;
+  z-index: 3;
+  margin: 6px;
+  border-radius: 8px;
+  border: 2px solid rgba(232, 212, 136, 0.95);
+  background: rgba(232, 212, 136, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(255, 243, 190, 0.35);
+  pointer-events: none;
+}
+
+.tab.inventory .cis-cell-inventory-drag-preview.active {
+  display: block;
+}
+
+.tab.inventory .cis-cell-inventory-drag-preview.invalid {
+  border-color: rgba(223, 98, 98, 0.95);
+  background: rgba(180, 55, 55, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(255, 180, 180, 0.22);
 }
 
 .tab.inventory .cis-cell-inventory-overflow {

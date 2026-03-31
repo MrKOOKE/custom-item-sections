@@ -22,7 +22,12 @@
     },
     "CellInventory": {
       "GridLabel": "Cell Inventory",
-      "Overflow": "Items outside the grid: {count}"
+      "Overflow": "Items outside the grid: {count}",
+      "Size": "Cell Inventory Size",
+      "SizeX": "X",
+      "SizeY": "Y",
+      "SizeHint": "How many cells the item occupies horizontally and vertically. Default is 1x1.",
+      "DoesNotFit": "This item does not fit in the selected cells."
     },
     "SplitQuantity": "Split Quantity",
     "All": "All",
