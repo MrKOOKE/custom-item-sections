@@ -245,7 +245,9 @@
 
 .cis-sheet-tabs {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-start;
   gap: 0.5rem;
   padding: 0;
   border: 0;
@@ -254,12 +256,17 @@
   left: auto;
   z-index: 2;
   flex: 0 0 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .cis-sheet-tabs .item {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
+  justify-content: flex-start;
   min-height: 42px;
   padding: 0 1.15rem;
   border: 1px solid rgba(255, 255, 255, 0.05);
@@ -269,6 +276,7 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-size: 0.84rem;
+  white-space: nowrap;
   transition: color 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
 
@@ -322,6 +330,20 @@
   min-height: 0;
   padding: 0.65rem;
   overflow: auto;
+}
+
+.cis-inventory-pane > dnd5e-inventory.inventory-element {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.cis-inventory-pane > dnd5e-inventory.inventory-element > .items-list.inventory-list {
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 0;
 }
 
 .cis-gear-board {
@@ -390,6 +412,11 @@
   transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
 }
 
+.cis-gear-slot[data-item-id] {
+  padding: 0.12rem;
+  overflow: hidden;
+}
+
 .cis-gear-slot:hover {
   border-color: var(--cis-edge-strong);
   transform: translateY(-1px);
@@ -442,6 +469,11 @@
   width: 100%;
 }
 
+.cis-gear-slot[data-item-id] .cis-gear-slot-item {
+  height: 100%;
+  gap: 0;
+}
+
 .cis-gear-slot-item::before {
   content: "";
   position: absolute;
@@ -452,11 +484,20 @@
   pointer-events: none;
 }
 
+.cis-gear-slot[data-item-id] .cis-gear-slot-item::before {
+  display: none;
+}
+
 .cis-gear-slot-item img {
   width: 100%;
   max-height: 88px;
   object-fit: contain;
   border: 0;
+}
+
+.cis-gear-slot[data-item-id] .cis-gear-slot-item img {
+  height: 100%;
+  max-height: none;
 }
 
 .cis-gear-slot-qty {
@@ -763,7 +804,9 @@
   }
 
   .cis-sheet-tabs {
+    flex-wrap: wrap;
     gap: 0.35rem;
+    overflow: visible;
   }
 
   .cis-sheet-tabs .item {

@@ -84,7 +84,13 @@ function getDefaultCapacities() {
 }
 
 function buildTabs() {
-  return TABS.map((tab, index) => ({
+  const preferredOrder = ["equipment", "organism", "skills", "research", "effects", "biography"];
+  const orderedTabs = preferredOrder
+    .map((id) => TABS.find((tab) => tab.id === id))
+    .filter(Boolean);
+  const remainingTabs = TABS.filter((tab) => !preferredOrder.includes(tab.id));
+
+  return [...orderedTabs, ...remainingTabs].map((tab, index) => ({
     ...tab,
     isEquipment: tab.id === "equipment",
     active: index === 0
@@ -134,11 +140,17 @@ function getEquippedItemsData(actor) {
   return Object.fromEntries(KNOWN_COVERAGE_AREAS.map((area) => [area, [null]]));
 }
 
+function getRenderedSlotOrder() {
+  const jewelryArea = KNOWN_COVERAGE_AREAS[14];
+  if (SLOT_ORDER.includes(jewelryArea)) return [...SLOT_ORDER];
+  return [...SLOT_ORDER, jewelryArea];
+}
+
 function buildGearSlots(actor) {
   const capacities = getCoverageCapacities(actor);
   const slotsData = getEquippedItemsData(actor);
 
-  return SLOT_ORDER.reduce((result, areaName, index) => {
+  return getRenderedSlotOrder().reduce((result, areaName, index) => {
     const capacity = Math.max(0, Number(capacities[areaName] ?? 1));
     if (capacity <= 0) return result;
 
