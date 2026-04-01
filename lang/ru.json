@@ -45,5 +45,8 @@
     "ContainerVolumeShort": "Объем",
     "ContainerSlots": "Слоты",
     "SlotCapacityExceeded": "В контейнере не хватает свободных ячеек."
+    ,
+    "OpenContainer": "\u041e\u0442\u043a\u0440\u044b\u0442\u044c",
+    "ContainerMissing": "\u041a\u043e\u043d\u0442\u0435\u0439\u043d\u0435\u0440 \u0431\u043e\u043b\u044c\u0448\u0435 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d."
   }
 }

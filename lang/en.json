@@ -46,6 +46,8 @@
     "ContainerVolumeHint": "How many cells are available inside the container horizontally and vertically. Equipped containers show this grid under the main inventory in the new sheet.",
     "ContainerVolumeShort": "Volume",
     "ContainerSlots": "Slots",
-    "SlotCapacityExceeded": "There is not enough free slot space in the container."
+    "SlotCapacityExceeded": "There is not enough free slot space in the container.",
+    "OpenContainer": "Open",
+    "ContainerMissing": "Container unavailable."
   }
 }

@@ -95,6 +95,143 @@
   font-family: "Roboto Condensed", "Signika", sans-serif;
 }
 
+.app.window-app.cis-container-window-app,
+.application.cis-container-window-app {
+  --cis-ui-scale: 1;
+  --cis-cell-size: 92px;
+  min-width: 360px;
+  min-height: 320px;
+  background:
+    linear-gradient(180deg, rgba(18, 24, 32, 0.98), rgba(8, 11, 16, 0.99)),
+    radial-gradient(circle at top right, rgba(214, 194, 125, 0.12), transparent 38%);
+  border: 1px solid rgba(228, 205, 144, 0.18);
+  border-radius: 16px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.42);
+  overflow: hidden;
+}
+
+.app.window-app.cis-container-window-app .window-header,
+.application.cis-container-window-app .window-header {
+  gap: 0.5rem;
+  min-height: 42px;
+  padding: 0 0.85rem;
+  border-bottom: 1px solid rgba(228, 205, 144, 0.12);
+  background: linear-gradient(180deg, rgba(22, 28, 36, 0.98), rgba(14, 18, 24, 0.98));
+  color: #ece8da;
+}
+
+.app.window-app.cis-container-window-app .window-title,
+.application.cis-container-window-app .window-title {
+  color: #d6c27d;
+  font-family: "Roboto Condensed", "Signika", sans-serif;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.app.window-app.cis-container-window-app .window-content,
+.application.cis-container-window-app .window-content {
+  padding: 0;
+  border: 0;
+  background:
+    radial-gradient(circle at top right, rgba(153, 128, 57, 0.14), transparent 34%),
+    radial-gradient(circle at bottom left, rgba(96, 129, 104, 0.08), transparent 28%),
+    linear-gradient(180deg, #11161d 0%, #0b0e13 100%);
+  overflow: hidden;
+}
+
+.app.window-app.cis-container-window-app .window-resizable-handle,
+.application.cis-container-window-app .window-resizable-handle {
+  display: none !important;
+}
+
+.cis-container-window-root {
+  --cis-bg: #0c0f14;
+  --cis-panel: rgba(14, 18, 24, 0.9);
+  --cis-panel-2: rgba(22, 28, 36, 0.88);
+  --cis-edge: rgba(228, 205, 144, 0.18);
+  --cis-edge-strong: rgba(228, 205, 144, 0.35);
+  --cis-accent: #d6c27d;
+  --cis-accent-soft: #8d845d;
+  --cis-text: #ece8da;
+  --cis-text-soft: #a8acb0;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  padding: 0.8rem 0.9rem 0.9rem;
+  color: var(--cis-text);
+  font-family: "Roboto Condensed", "Signika", sans-serif;
+}
+
+.cis-container-window-root .tab.inventory {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.cis-container-window {
+  gap: 0.7rem;
+}
+
+.cis-container-window-grid-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  max-width: 100%;
+  max-height: 100%;
+  padding: 0 0 0.15rem;
+}
+
+.cis-container-window-meta-line {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-height: 1.2rem;
+}
+
+.cis-container-window-capacity {
+  color: var(--cis-text-soft);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cis-container-window-empty {
+  display: grid;
+  place-items: center;
+  min-height: 240px;
+  padding: 1.5rem;
+  border: 1px dashed rgba(228, 205, 144, 0.2);
+  border-radius: 14px;
+  background: rgba(10, 13, 18, 0.68);
+  color: var(--cis-text-soft);
+  font-size: 0.9rem;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.cis-container-window .cis-container-grid-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.45rem * var(--cis-ui-scale));
+}
+
+.cis-container-window .cis-container-grid-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(26px * var(--cis-ui-scale));
+  padding: 0 calc(0.5rem * var(--cis-ui-scale));
+  border: 1px solid rgba(228, 205, 144, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--cis-accent);
+  font-size: calc(0.66rem * var(--cis-ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .cis-sheet-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

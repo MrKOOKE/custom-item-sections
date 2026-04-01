@@ -105,6 +105,19 @@ let activeCellInventoryDrag = null;
 let transparentDragImage = null;
 let ownedItemDragPreview = null;
 const pendingAutoUnequipPlacementTimers = new Map();
+const openContainerWindows = new Map();
+const actorSheetPrioritySyncByActor = new Map();
+const CONTAINER_WINDOW = Object.freeze({
+  minCellSize: 56,
+  maxCellSize: 100,
+  preferredCellSize: 92,
+  minWidth: 360,
+  minHeight: 320,
+  widthPadding: 92,
+  heightPadding: 228,
+  viewportWidthRatio: 0.92,
+  viewportHeightRatio: 0.88
+});
 
 function getExpandedContainersForActor(actorId) {
   if (!expandedContainersByActor.has(actorId)) expandedContainersByActor.set(actorId, new Set());
@@ -341,6 +354,8 @@ function beginOwnedItemSheetDrag(actor, item, event, extra = {}) {
     type: 'Item'
   });
 
+  scheduleBringOpenContainerWindowsToFront(actor);
+
   return dragData;
 }
 
@@ -524,6 +539,33 @@ Hooks.on('updateItem', (item, changed, options = {}) => {
 });
 
 // Функция настройки обработчиков контроля инвентаря
+Hooks.on('dnd5e.getItemContextOptions', (item, menuItems) => {
+  if (!isOpenableContainerItem(item)) return;
+
+  const openMenuItem = {
+    name: localizeSafe('CUSTOM_SECTIONS.OpenContainer', 'Открыть'),
+    icon: "<i class='fas fa-box-open fa-fw'></i>",
+    condition: () => isOpenableContainerItem(item),
+    callback: () => {
+      openContainerWindow(item);
+    },
+    group: 'action'
+  };
+
+  let insertIndex = -1;
+  for (let i = 0; i < menuItems.length; i += 1) {
+    const menuItem = menuItems[i];
+    if (menuItem?.name === 'DND5E.ContextMenuActionDuplicate'
+      || menuItem?.name === 'DND5E.ContextMenuActionEdit'
+      || (typeof menuItem?.callback === 'function' && menuItem.callback.toString().includes('duplicate'))) {
+      insertIndex = i + 1;
+    }
+  }
+
+  if (insertIndex < 0) insertIndex = Math.min(3, menuItems.length);
+  menuItems.splice(insertIndex, 0, openMenuItem);
+});
+
 function setupInventoryControlHandlers() {
   // Добавляем обработчик события click для перехвата кликов по кнопкам + и - в кастомных секциях
   $(document).on("click", "[data-custom-section] .adjustment-button", function(event) {
@@ -619,7 +661,8 @@ const SCROLL_STABILIZER_EXTRA_SELECTORS = Object.freeze([
   '.cis-loadout-pane',
   '.cis-inventory-pane',
   '.cis-cell-inventory-scroll',
-  '.cis-cell-inventory-panel-scroll'
+  '.cis-cell-inventory-panel-scroll',
+  '.cis-container-window-grid-host'
 ]);
 
 const SCROLL_STABILIZER_DATA_KEYS = Object.freeze([
@@ -648,7 +691,9 @@ const SCROLL_STABILIZER_CLASS_NAMES = new Set([
   'cis-cell-inventory-shell',
   'cis-cell-inventory-content',
   'cis-cell-inventory-panels',
-  'cis-cell-inventory-root-scope'
+  'cis-cell-inventory-root-scope',
+  'cis-container-window-grid-host',
+  'cis-container-window-root'
 ]);
 
 function getScrollStabilizerSelectors(app) {
@@ -3274,6 +3319,494 @@ function getContainerCapacityHint(containerItem, capacity) {
   const units = capacity?.units ? ` ${escapeHtml(capacity.units)}` : '';
   if (!capacityLabel) return `${value} / ${maxLabel}${units}`;
   return `${escapeHtml(capacityLabel)}: ${value} / ${maxLabel}${units}`;
+}
+
+function isOpenableContainerItem(item) {
+  return item?.type === 'container'
+    && item?.parent?.documentName === 'Actor'
+    && item?.parent?.isOwner;
+}
+
+function clampNumber(value, min, max) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return min;
+  return Math.min(Math.max(numeric, min), max);
+}
+
+function getContainerWindowKey(actorId, containerId) {
+  if (!actorId || !containerId) return null;
+  return `${actorId}:${containerId}`;
+}
+
+function getContainerWindowActorKey(actorLike) {
+  return actorLike?.uuid ?? actorLike?.id ?? null;
+}
+
+function getOpenContainerWindowsForActorKey(actorKey) {
+  if (!actorKey) return [];
+
+  const windows = [];
+  for (const windowApp of openContainerWindows.values()) {
+    if (!windowApp || windowApp.actorKey !== actorKey) continue;
+    windows.push(windowApp);
+  }
+  return windows;
+}
+
+function getOpenContainerWindowsForActor(actorLike) {
+  return getOpenContainerWindowsForActorKey(getContainerWindowActorKey(actorLike));
+}
+
+function bringOpenContainerWindowsToFront(actorLike) {
+  const windows = getOpenContainerWindowsForActor(actorLike);
+  if (!windows.length) return;
+
+  for (const windowApp of windows) {
+    if (!windowApp?.rendered) continue;
+    focusApplicationWindow(windowApp);
+  }
+}
+
+function scheduleBringOpenContainerWindowsToFront(actorLike) {
+  const actorKey = getContainerWindowActorKey(actorLike);
+  if (!actorKey || !getOpenContainerWindowsForActorKey(actorKey).length) return;
+
+  const apply = () => {
+    try {
+      bringOpenContainerWindowsToFront(actorLike);
+    } catch (_) { /* ignore */ }
+  };
+
+  apply();
+  globalThis.queueMicrotask?.(apply);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(apply);
+  setTimeout(apply, 0);
+  setTimeout(apply, 40);
+}
+
+function installActorSheetContainerWindowPrioritySync(actorLike) {
+  const actorKey = getContainerWindowActorKey(actorLike);
+  const sheet = actorLike?.sheet;
+  if (!actorKey || !sheet || typeof sheet.bringToTop !== 'function') return;
+
+  const existing = actorSheetPrioritySyncByActor.get(actorKey);
+  if (existing?.sheet === sheet) return;
+
+  if (existing) uninstallActorSheetContainerWindowPrioritySync(actorKey);
+
+  const originalBringToTop = sheet.bringToTop;
+  sheet.bringToTop = function cisContainerAwareBringToTop(...args) {
+    const result = originalBringToTop.call(this, ...args);
+    scheduleBringOpenContainerWindowsToFront(actorLike);
+    return result;
+  };
+
+  actorSheetPrioritySyncByActor.set(actorKey, {
+    sheet,
+    originalBringToTop
+  });
+}
+
+function uninstallActorSheetContainerWindowPrioritySync(actorKey) {
+  if (!actorKey) return;
+
+  if (getOpenContainerWindowsForActorKey(actorKey).length) return;
+
+  const existing = actorSheetPrioritySyncByActor.get(actorKey);
+  if (!existing) return;
+
+  try {
+    if (existing.sheet?.bringToTop && existing.originalBringToTop) {
+      existing.sheet.bringToTop = existing.originalBringToTop;
+    }
+  } catch (_) { /* ignore */ }
+
+  actorSheetPrioritySyncByActor.delete(actorKey);
+}
+
+function getContainerWindowViewportBounds() {
+  const viewportWidth = Number(globalThis.innerWidth) || 1600;
+  const viewportHeight = Number(globalThis.innerHeight) || 900;
+  return {
+    width: Math.max(CONTAINER_WINDOW.minWidth, Math.floor(viewportWidth * CONTAINER_WINDOW.viewportWidthRatio)),
+    height: Math.max(CONTAINER_WINDOW.minHeight, Math.floor(viewportHeight * CONTAINER_WINDOW.viewportHeightRatio))
+  };
+}
+
+function getContainerWindowCellSize(gridDimensions) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
+  const bounds = getContainerWindowViewportBounds();
+  const maxCellWidth = Math.floor((bounds.width - CONTAINER_WINDOW.widthPadding) / Math.max(1, grid.columns));
+  const maxCellHeight = Math.floor((bounds.height - CONTAINER_WINDOW.heightPadding) / Math.max(1, grid.rows));
+  return clampNumber(
+    Math.min(CONTAINER_WINDOW.preferredCellSize, maxCellWidth, maxCellHeight),
+    CONTAINER_WINDOW.minCellSize,
+    CONTAINER_WINDOW.maxCellSize
+  );
+}
+
+function getContainerWindowMetrics(containerItem) {
+  const grid = getContainerGridLayout(containerItem);
+  const cellSize = getContainerWindowCellSize(grid);
+  const bounds = getContainerWindowViewportBounds();
+  return {
+    grid,
+    cellSize,
+    width: clampNumber((grid.columns * cellSize) + CONTAINER_WINDOW.widthPadding, CONTAINER_WINDOW.minWidth, bounds.width),
+    height: clampNumber((grid.rows * cellSize) + CONTAINER_WINDOW.heightPadding, CONTAINER_WINDOW.minHeight, bounds.height)
+  };
+}
+
+function restoreScrollStateDeferred(root, states = []) {
+  if (!root || !states.length) return;
+
+  const applyScroll = () => {
+    try {
+      restoreScrollStabilizerState(root, states);
+    } catch (_) { /* ignore */ }
+  };
+
+  applyScroll();
+  globalThis.queueMicrotask?.(applyScroll);
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
+  setTimeout(applyScroll, 0);
+  setTimeout(applyScroll, 50);
+  setTimeout(applyScroll, 150);
+}
+
+function focusApplicationWindow(app) {
+  if (!app) return;
+  try {
+    app.maximize?.();
+  } catch (_) { /* ignore */ }
+  try {
+    app.bringToTop?.();
+  } catch (_) { /* ignore */ }
+}
+
+async function openContainerWindow(containerItem) {
+  if (!isOpenableContainerItem(containerItem)) return null;
+
+  installActorSheetContainerWindowPrioritySync(containerItem.parent);
+
+  const key = getContainerWindowKey(getContainerWindowActorKey(containerItem.parent), containerItem.id);
+  if (!key) return null;
+
+  const existingWindow = openContainerWindows.get(key);
+  if (existingWindow) {
+    existingWindow.render(false, { focus: true });
+    focusApplicationWindow(existingWindow);
+    return existingWindow;
+  }
+
+  const windowApp = new CellInventoryContainerWindow(containerItem);
+  openContainerWindows.set(key, windowApp);
+  try {
+    await windowApp.render(true, { focus: true });
+  } catch (error) {
+    openContainerWindows.delete(key);
+    throw error;
+  }
+  focusApplicationWindow(windowApp);
+  return windowApp;
+}
+
+class CellInventoryContainerWindow extends Application {
+  constructor(containerItem) {
+    super();
+    this._actor = containerItem?.parent ?? null;
+    this.actorId = containerItem?.parent?.id ?? null;
+    this.actorUuid = containerItem?.parent?.uuid ?? null;
+    this.actorKey = getContainerWindowActorKey(containerItem?.parent);
+    this.containerId = containerItem?.id ?? null;
+    this.containerName = containerItem?.name ?? '';
+    this._pendingRenderTimer = null;
+    this._hookIds = [];
+    this._registerHooks();
+  }
+
+  static get defaultOptions() {
+    return foundry.utils.mergeObject(super.defaultOptions, {
+      id: 'cis-container-window',
+      template: `modules/${MODULE_ID}/templates/apps/cell-inventory-container-window.hbs`,
+      popOut: true,
+      resizable: false,
+      minimizable: true,
+      width: 560,
+      height: 620,
+      classes: ['dnd5e', 'cis-container-window-app'],
+      scrollY: ['.cis-container-window-grid-host']
+    });
+  }
+
+  get actor() {
+    if (this._actor) return this._actor;
+    if (typeof globalThis.fromUuidSync === 'function' && this.actorUuid) {
+      try {
+        this._actor = globalThis.fromUuidSync(this.actorUuid) ?? null;
+      } catch (_) { /* ignore */ }
+    }
+    if (!this._actor && this.actorId) {
+      this._actor = game.actors?.get(this.actorId) ?? null;
+    }
+    return this._actor ?? null;
+  }
+
+  get containerItem() {
+    return this.actor?.items?.get(this.containerId) ?? null;
+  }
+
+  get id() {
+    const actorKey = String(this.actorKey ?? this.actorId ?? 'actor').replace(/[^a-zA-Z0-9_-]/g, '-');
+    return `cis-container-window-${actorKey}-${this.containerId ?? 'container'}`;
+  }
+
+  get title() {
+    const containerItem = this.containerItem;
+    return String(containerItem?.name ?? this.containerName ?? this.containerId ?? localizeSafe('CUSTOM_SECTIONS.OpenContainer', 'Open'));
+  }
+
+  _registerHooks() {
+    this._hookIds.push(
+      ['createItem', Hooks.on('createItem', (item) => this._onActorItemChange(item))],
+      ['updateItem', Hooks.on('updateItem', (item) => this._onActorItemChange(item))],
+      ['deleteItem', Hooks.on('deleteItem', (item) => this._onActorItemDelete(item))],
+      ['updateActor', Hooks.on('updateActor', (actor) => this._onActorUpdate(actor))]
+    );
+  }
+
+  _clearHooks() {
+    for (const [hookName, hookId] of this._hookIds) {
+      try {
+        Hooks.off(hookName, hookId);
+      } catch (_) { /* ignore */ }
+    }
+    this._hookIds = [];
+  }
+
+  _matchesActor(actor) {
+    if (!actor) return false;
+    if (this.actorUuid && actor.uuid === this.actorUuid) return true;
+    return Boolean(actor.id) && actor.id === this.actorId;
+  }
+
+  _onActorItemChange(item) {
+    if (!this._matchesActor(item?.parent)) return;
+    if (!this.containerItem && item?.id === this.containerId) {
+      this.close();
+      return;
+    }
+    this.scheduleRefresh();
+  }
+
+  _onActorItemDelete(item) {
+    if (!this._matchesActor(item?.parent)) return;
+    if (item?.id === this.containerId) {
+      this.close();
+      return;
+    }
+    this.scheduleRefresh();
+  }
+
+  _onActorUpdate(actor) {
+    if (!this._matchesActor(actor)) return;
+    if (!this.containerItem) {
+      this.close();
+      return;
+    }
+    this.scheduleRefresh();
+  }
+
+  scheduleRefresh() {
+    if (this._pendingRenderTimer) return;
+    this._pendingRenderTimer = setTimeout(() => {
+      this._pendingRenderTimer = null;
+      if (!this.rendered) return;
+      if (!this.containerItem) {
+        this.close();
+        return;
+      }
+      this.render(false);
+    }, 0);
+  }
+
+  async _render(force, options) {
+    const rootBefore = this.element?.[0] ?? null;
+    const savedState = collectScrollStabilizerState(rootBefore, getScrollStabilizerSelectors(this));
+    const result = await super._render(force, options);
+    const rootAfter = this.element?.[0] ?? null;
+    restoreScrollStateDeferred(rootAfter, savedState);
+    return result;
+  }
+
+  async close(options = {}) {
+    if (this._pendingRenderTimer) {
+      clearTimeout(this._pendingRenderTimer);
+      this._pendingRenderTimer = null;
+    }
+    this._clearHooks();
+    const key = getContainerWindowKey(this.actorKey ?? this.actorUuid ?? this.actorId, this.containerId);
+    if (key) openContainerWindows.delete(key);
+    uninstallActorSheetContainerWindowPrioritySync(this.actorKey ?? this.actorUuid ?? this.actorId);
+    return super.close(options);
+  }
+
+  async getData(options = {}) {
+    const data = await super.getData(options);
+    const actor = this.actor;
+    const containerItem = this.containerItem;
+    if (!actor || !containerItem) {
+      return {
+        ...data,
+        missing: true,
+        missingLabel: escapeHtml(localizeSafe('CUSTOM_SECTIONS.ContainerMissing', 'Container unavailable.'))
+      };
+    }
+
+    this.containerName = containerItem.name ?? this.containerName;
+
+    const layoutState = collectContainerInventoryLayoutState(actor, containerItem);
+    const capacity = await containerItem.system.computeCapacity();
+    const metrics = getContainerWindowMetrics(containerItem);
+
+    return {
+      ...data,
+      actor,
+      container: containerItem,
+      missing: false,
+      cellSize: metrics.cellSize,
+      gridHtml: createCellInventoryGridMarkup(layoutState, { containerId: containerItem.id }),
+      capacityHintHtml: getContainerCapacityHint(containerItem, capacity),
+      slotsLabel: escapeHtml(localizeSafe('CUSTOM_SECTIONS.ContainerSlots', 'Slots')),
+      volumeLabel: escapeHtml(localizeSafe('CUSTOM_SECTIONS.ContainerVolumeShort', 'Volume')),
+      usedSlots: getContainerUsedSlotCount(layoutState.items),
+      totalSlots: metrics.grid.columns * metrics.grid.rows,
+      volumeValue: `${metrics.grid.columns} x ${metrics.grid.rows}`,
+      overflowText: layoutState.overflow.length
+        ? escapeHtml(formatLocalizeSafe(
+          'CUSTOM_SECTIONS.CellInventory.Overflow',
+          { count: layoutState.overflow.length },
+          `Overflow: ${layoutState.overflow.length}`
+        ))
+        : '',
+      windowWidth: metrics.width,
+      windowHeight: metrics.height
+    };
+  }
+
+  activateListeners(html) {
+    super.activateListeners(html);
+    if (!this.containerItem) return;
+
+    html.find('.item-tooltip').each((_, element) => {
+      applyItemTooltips(element, this);
+    });
+
+    activateContainerWindowGrid(this, html);
+
+    const metrics = getContainerWindowMetrics(this.containerItem);
+    this.setPosition({
+      width: metrics.width,
+      height: metrics.height
+    });
+  }
+}
+
+function activateContainerWindowGrid(app, html) {
+  const host = html.find('.cis-container-window-grid-host').first();
+  if (!host.length) return;
+
+  host.off('.cis-container-window');
+
+  host.on('click.cis-container-window', '.cis-cell-inventory-item .cis-cell-inventory-tile', async (event) => {
+    const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
+    if (!itemElement) return;
+    const item = app.actor?.items?.get(itemElement.dataset.itemId);
+    if (!item) return;
+
+    if (event.shiftKey && (item.system?.equipped !== undefined)) {
+      event.preventDefault();
+      event.stopPropagation();
+      await toggleEquip(item, itemElement);
+      return;
+    }
+
+    if (item.type === 'container') return;
+
+    await item.use({}, { event });
+  });
+
+  host.on('dragstart.cis-container-window', '.cis-cell-inventory-item', (event) => {
+    const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
+    if (!itemElement) return;
+    const item = app.actor?.items?.get(itemElement.dataset.itemId);
+    if (!item) return;
+    beginOwnedItemSheetDrag(app.actor, item, event);
+    itemElement.classList.add('dragging');
+  });
+
+  host.on('dragend.cis-container-window', '.cis-cell-inventory-item', () => {
+    clearCellInventoryDragState(host);
+    finishOwnedItemSheetDrag();
+  });
+
+  host.on('dragover.cis-container-window', '.cis-cell-inventory-grid-stack', (event) => {
+    event.preventDefault();
+    const nativeEvent = event.originalEvent ?? event;
+    const scopeContext = getCellInventoryGridScopeContext(app, event.currentTarget);
+    if (!scopeContext.layoutState) return;
+
+    const { dragSize, ignoredIds } = getCellInventoryDragState(app, nativeEvent);
+    const targetPosition = getCellInventoryGridPositionFromEvent(
+      event.currentTarget,
+      nativeEvent,
+      scopeContext.layoutState.gridDimensions,
+      dragSize
+    );
+    const placementState = getCellInventoryPlacementState(scopeContext.layoutState, targetPosition, dragSize, ignoredIds);
+    if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = placementState.isValid ? 'move' : 'none';
+    setCellInventoryDragTarget(host, placementState.position, dragSize, placementState.isValid, scopeContext.scopeRoot);
+  });
+
+  host.on('dragleave.cis-container-window', '.cis-cell-inventory-grid-stack', (event) => {
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    clearCellInventoryDragState(host);
+  });
+
+  host.on('drop.cis-container-window', '.cis-cell-inventory-grid-stack', async (event) => {
+    const nativeEvent = event.originalEvent ?? event;
+    const { dropData, dragSize } = getCellInventoryDragState(app, nativeEvent, { readDropData: true });
+    clearCellInventoryDragState(host);
+    finishOwnedItemSheetDrag();
+    if (!dropData || dropData.type !== 'Item') return;
+
+    event.preventDefault();
+    nativeEvent.preventDefault?.();
+    event.stopImmediatePropagation();
+    nativeEvent.stopImmediatePropagation?.();
+
+    const scopeContext = getCellInventoryGridScopeContext(app, event.currentTarget);
+    if (!scopeContext.layoutState || !scopeContext.containerId) return;
+
+    const targetPosition = getCellInventoryGridPositionFromEvent(
+      event.currentTarget,
+      nativeEvent,
+      scopeContext.layoutState.gridDimensions,
+      dragSize
+    );
+    if (!targetPosition) return;
+
+    const targetContainer = app.actor?.items?.get(scopeContext.containerId);
+    if (!targetContainer) return;
+
+    const droppedItem = await resolveDroppedItem(app, dropData);
+    if (!droppedItem || droppedItem.id === targetContainer.id) return;
+
+    await moveItemToContainer(app, droppedItem, targetContainer, {
+      dropData,
+      position: targetPosition
+    });
+  });
 }
 
 async function buildContainerCellInventoryPanel(app, containerItem) {

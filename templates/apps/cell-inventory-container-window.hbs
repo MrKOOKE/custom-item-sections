@@ -1,0 +1,27 @@
+<section class="cis-container-window-root" {{#unless missing}}style="--cis-cell-size: {{cellSize}}px;"{{/unless}}>
+  {{#if missing}}
+    <section class="tab inventory cis-container-window">
+      <div class="cis-container-window-empty">{{missingLabel}}</div>
+    </section>
+  {{else}}
+    <section
+      class="tab inventory cis-container-window cis-cell-inventory-scope"
+      data-scope-type="container"
+      data-container-id="{{container.id}}"
+    >
+      <div class="cis-container-window-meta-line">
+        <div class="cis-container-window-capacity">{{{capacityHintHtml}}}</div>
+      </div>
+      <div class="cis-container-grid-meta">
+        <span>{{slotsLabel}}: {{usedSlots}} / {{totalSlots}}</span>
+        <span>{{volumeLabel}}: {{volumeValue}}</span>
+      </div>
+      <div class="cis-container-window-grid-host">
+        {{{gridHtml}}}
+      </div>
+      {{#if overflowText}}
+        <div class="cis-cell-inventory-overflow">{{overflowText}}</div>
+      {{/if}}
+    </section>
+  {{/if}}
+</section>
