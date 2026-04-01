@@ -895,7 +895,7 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
   // Получаем текущее значение section из флагов
   const section = app.object.getFlag(MODULE_ID, FLAGS.SECTION) || '';
   const nonStackable = Boolean(app.object.getFlag(MODULE_ID, FLAGS.NON_STACKABLE));
-  const cellSize = getCellInventorySize(app.object);
+  const cellSize = getConfiguredCellInventorySize(app.object);
   
   // Находим вкладку Details
   const detailsTab = html.find('.tab.details');
@@ -1419,7 +1419,7 @@ function sanitizeCellInventorySize(value) {
   return { width, height };
 }
 
-function getCellInventorySize(itemLike) {
+function getConfiguredCellInventorySize(itemLike) {
   const readFlag = (flag) => {
     if (typeof itemLike?.getFlag === 'function') return itemLike.getFlag(MODULE_ID, flag);
     return foundry.utils.getProperty(itemLike, `flags.${MODULE_ID}.${flag}`);
@@ -1429,6 +1429,91 @@ function getCellInventorySize(itemLike) {
     x: readFlag(FLAGS.GRID_SIZE_X),
     y: readFlag(FLAGS.GRID_SIZE_Y)
   });
+}
+
+function getContainerContentsForFootprint(containerItem) {
+  if (!containerItem || containerItem.type !== 'container') return [];
+
+  const actor = containerItem.parent;
+  if (actor?.items && containerItem.id) {
+    return getContainerItems(actor, containerItem.id);
+  }
+
+  const rawContents = containerItem.system?.contents;
+  if (!rawContents || typeof rawContents?.then === 'function') return [];
+  if (typeof rawContents?.values === 'function') return Array.from(rawContents.values());
+  if (Array.isArray(rawContents)) return [...rawContents];
+  return [];
+}
+
+function getCompactContainerFootprintSize(containerItem, baseSize, evaluationStack = new Set()) {
+  const contents = getContainerContentsForFootprint(containerItem);
+  if (!contents.length) return baseSize;
+
+  const grid = getContainerGridLayout(containerItem);
+  const sizedContents = contents
+    .map((item) => ({
+      item,
+      size: getCellInventorySize(item, { _evaluationStack: evaluationStack })
+    }))
+    .filter(({ size }) => Boolean(size?.width) && Boolean(size?.height))
+    .sort((left, right) => {
+      const leftArea = left.size.width * left.size.height;
+      const rightArea = right.size.width * right.size.height;
+      return rightArea - leftArea
+        || right.size.height - left.size.height
+        || right.size.width - left.size.width
+        || compareCellInventoryStrings(left.item?.name, right.item?.name);
+    });
+
+  const occupiedCells = new Map();
+  let maxRight = 0;
+  let maxBottom = 0;
+
+  for (const { item, size } of sizedContents) {
+    if (!doesCellInventorySizeFitGrid(size, grid)) {
+      return {
+        width: Math.max(baseSize.width, grid.columns),
+        height: Math.max(baseSize.height, grid.rows)
+      };
+    }
+
+    const position = findNextFreeCellInventoryPosition(occupiedCells, size, grid);
+    if (!position) {
+      return {
+        width: Math.max(baseSize.width, grid.columns),
+        height: Math.max(baseSize.height, grid.rows)
+      };
+    }
+
+    markCellInventoryArea(occupiedCells, item, position, size, grid);
+    maxRight = Math.max(maxRight, position.x + size.width);
+    maxBottom = Math.max(maxBottom, position.y + size.height);
+  }
+
+  return {
+    width: Math.max(baseSize.width, maxRight || 1),
+    height: Math.max(baseSize.height, maxBottom || 1)
+  };
+}
+
+function getCellInventorySize(itemLike, options = {}) {
+  const baseSize = getConfiguredCellInventorySize(itemLike);
+  if (!itemLike || itemLike.type !== 'container') return baseSize;
+  if (options?.useBaseSize) return baseSize;
+
+  const itemKey = itemLike.id ?? itemLike.uuid ?? null;
+  const evaluationStack = options?._evaluationStack instanceof Set ? options._evaluationStack : new Set();
+  if (itemKey) {
+    if (evaluationStack.has(itemKey)) return baseSize;
+    evaluationStack.add(itemKey);
+  }
+
+  try {
+    return getCompactContainerFootprintSize(itemLike, baseSize, evaluationStack);
+  } finally {
+    if (itemKey) evaluationStack.delete(itemKey);
+  }
 }
 
 function getContainerGridSize(containerItem) {
