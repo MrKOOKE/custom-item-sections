@@ -47,6 +47,7 @@
     "ContainerVolumeShort": "Volume",
     "ContainerSlots": "Slots",
     "SlotCapacityExceeded": "There is not enough free slot space in the container.",
+    "QuickTransferUnavailable": "No available space for quick transfer.",
     "OpenContainer": "Open",
     "ContainerMissing": "Container unavailable."
   }

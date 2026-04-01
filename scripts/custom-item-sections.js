@@ -107,6 +107,7 @@ let ownedItemDragPreview = null;
 const pendingAutoUnequipPlacementTimers = new Map();
 const openContainerWindows = new Map();
 const actorSheetPrioritySyncByActor = new Map();
+let containerWindowFocusCounter = 0;
 const CONTAINER_WINDOW = Object.freeze({
   minCellSize: 56,
   maxCellSize: 100,
@@ -1378,6 +1379,12 @@ function applyGridInventory(app, html) {
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
     if (!item) return;
+    if (isQuickTransferEvent(event) && getItemTab(item) === 'inventory') {
+      event.preventDefault();
+      event.stopPropagation();
+      await quickTransferItem(app, item);
+      return;
+    }
     if (event.shiftKey && (item.system?.equipped !== undefined)) {
       event.preventDefault();
       event.stopPropagation();
@@ -2374,6 +2381,13 @@ function applyCellInventory(app, html) {
     const item = app.actor.items.get(itemElement.dataset.itemId);
     if (!item) return;
 
+    if (isQuickTransferEvent(event) && getItemTab(item) === 'inventory') {
+      event.preventDefault();
+      event.stopPropagation();
+      await quickTransferItem(app, item);
+      return;
+    }
+
     if (event.shiftKey && (item.system?.equipped !== undefined)) {
       event.preventDefault();
       event.stopPropagation();
@@ -3109,6 +3123,12 @@ function attachCustomSectionEventHandlers(html, app) {
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
     if (!item) return;
+    if (isQuickTransferEvent(event) && getItemTab(item) === 'inventory') {
+      event.preventDefault();
+      event.stopPropagation();
+      await quickTransferItem(app, item);
+      return;
+    }
     // Shift+ЛКМ: переключение экипировки, если поддерживается
     if (event.shiftKey && (item.system?.equipped !== undefined)) {
       event.preventDefault();
@@ -3342,6 +3362,21 @@ function getContainerWindowActorKey(actorLike) {
   return actorLike?.uuid ?? actorLike?.id ?? null;
 }
 
+function isQuickTransferEvent(event) {
+  return Boolean(event?.ctrlKey);
+}
+
+function markApplicationWindowFocus(app) {
+  if (!app) return;
+  app._cisFocusOrder = ++containerWindowFocusCounter;
+}
+
+function sortContainerWindowsByFocus(windows = []) {
+  return [...windows].sort((left, right) => (
+    Number(right?._cisFocusOrder ?? 0) - Number(left?._cisFocusOrder ?? 0)
+  ) || compareCellInventoryStrings(left?.containerName, right?.containerName));
+}
+
 function getOpenContainerWindowsForActorKey(actorKey) {
   if (!actorKey) return [];
 
@@ -3355,6 +3390,218 @@ function getOpenContainerWindowsForActorKey(actorKey) {
 
 function getOpenContainerWindowsForActor(actorLike) {
   return getOpenContainerWindowsForActorKey(getContainerWindowActorKey(actorLike));
+}
+
+function isContainerNestedWithin(actor, containerId, potentialAncestorId) {
+  if (!actor || !containerId || !potentialAncestorId) return false;
+
+  const visited = new Set();
+  let currentId = containerId;
+  while (currentId && !visited.has(currentId)) {
+    if (currentId === potentialAncestorId) return true;
+    visited.add(currentId);
+    currentId = actor.items?.get(currentId)?.system?.container ?? null;
+  }
+
+  return false;
+}
+
+function canQuickTransferItemIntoContainer(actor, item, targetContainer, {
+  excludeContainerIds = null
+} = {}) {
+  if (!actor || !item || !targetContainer) return false;
+  if (item.parent !== actor || targetContainer.parent !== actor) return false;
+  if (targetContainer.type !== 'container') return false;
+  if (excludeContainerIds?.has?.(targetContainer.id)) return false;
+  if (targetContainer.id === item.id) return false;
+  if ((item.system?.container ?? null) === targetContainer.id) return false;
+  if (item.type === 'container' && isContainerNestedWithin(actor, targetContainer.id, item.id)) return false;
+  return true;
+}
+
+function getOpenQuickTransferContainers(actor, item, {
+  excludeContainerIds = null,
+  requireEquipped = false
+} = {}) {
+  const containers = [];
+  const seenIds = new Set();
+
+  for (const windowApp of sortContainerWindowsByFocus(getOpenContainerWindowsForActor(actor))) {
+    if (!windowApp?.rendered) continue;
+
+    const targetContainer = windowApp.containerItem;
+    if (!targetContainer || seenIds.has(targetContainer.id)) continue;
+    if (requireEquipped && !targetContainer.system?.equipped) continue;
+    if (!canQuickTransferItemIntoContainer(actor, item, targetContainer, { excludeContainerIds })) continue;
+
+    seenIds.add(targetContainer.id);
+    containers.push(targetContainer);
+  }
+
+  return containers;
+}
+
+function getQuickTransferEquippedContainers(actor, item, {
+  excludeContainerIds = null
+} = {}) {
+  if (!actor) return [];
+
+  const containers = [];
+  const seenIds = new Set();
+
+  for (const openContainer of getOpenQuickTransferContainers(actor, item, {
+    excludeContainerIds,
+    requireEquipped: true
+  })) {
+    seenIds.add(openContainer.id);
+    containers.push(openContainer);
+  }
+
+  for (const targetContainer of actor.items) {
+    if (seenIds.has(targetContainer.id)) continue;
+    if (targetContainer.type !== 'container') continue;
+    if (targetContainer.system?.container) continue;
+    if (!targetContainer.system?.equipped) continue;
+    if (getItemTab(targetContainer) !== 'inventory') continue;
+    if (!canQuickTransferItemIntoContainer(actor, item, targetContainer, { excludeContainerIds })) continue;
+
+    seenIds.add(targetContainer.id);
+    containers.push(targetContainer);
+  }
+
+  return containers;
+}
+
+function resolveRootInventoryPlacement(actor, itemLike, {
+  preferredPosition = null,
+  ignoredIds = new Set()
+} = {}) {
+  const gridDimensions = getCellInventoryGridDimensions(CELL_INVENTORY);
+  const mergeTarget = actor ? findMergeTarget(actor, itemLike, null) : null;
+  if (mergeTarget) {
+    return {
+      position: getStoredCellInventoryPosition(mergeTarget, actor?.id ?? null, gridDimensions),
+      reason: null,
+      gridDimensions,
+      mergeTarget
+    };
+  }
+
+  const size = getCellInventorySize(itemLike);
+  if (!doesCellInventorySizeFitGrid(size, gridDimensions)) {
+    return {
+      position: null,
+      reason: 'slots',
+      gridDimensions,
+      mergeTarget: null
+    };
+  }
+
+  const layoutState = collectCellInventoryLayoutState(actor);
+  if (preferredPosition) {
+    const preferredPlacement = getCellInventoryPlacementState(
+      layoutState,
+      preferredPosition,
+      size,
+      ignoredIds,
+      gridDimensions
+    );
+    if (preferredPlacement.isValid) {
+      return {
+        position: preferredPlacement.position,
+        reason: null,
+        gridDimensions,
+        mergeTarget: null,
+        layoutState
+      };
+    }
+    return {
+      position: null,
+      reason: 'slots',
+      gridDimensions,
+      mergeTarget: null,
+      layoutState
+    };
+  }
+
+  const autoPosition = findNextFreeCellInventoryPosition(layoutState.occupiedCells, size, gridDimensions);
+  return {
+    position: autoPosition,
+    reason: autoPosition ? null : 'slots',
+    gridDimensions,
+    mergeTarget: null,
+    layoutState
+  };
+}
+
+async function quickTransferItemToRoot(app, item) {
+  if (!app?.actor || !item) return false;
+
+  const placement = resolveRootInventoryPlacement(app.actor, item);
+  if (!placement.mergeTarget && !placement.position) return false;
+
+  const itemId = item.id;
+  const succeeded = await moveItemToRoot(app, item, {
+    amount: Math.max(1, Number(item.system?.quantity ?? 1)),
+    skipQuantityPrompt: true,
+    suppressNotifications: true
+  });
+  if (!succeeded) return false;
+
+  if (!placement.mergeTarget && placement.position) {
+    const movedItem = app.actor.items.get(itemId);
+    if (movedItem && !movedItem.system?.container) {
+      await moveRootInventoryItemToCell(app, movedItem, placement.position);
+    }
+  }
+
+  return true;
+}
+
+function warnQuickTransferUnavailable() {
+  ui.notifications?.warn?.(localizeSafe(
+    'CUSTOM_SECTIONS.QuickTransferUnavailable',
+    'No available space for quick transfer.'
+  ));
+}
+
+async function quickTransferItem(app, item) {
+  const actor = app?.actor ?? item?.parent ?? null;
+  if (!actor?.isOwner || !item || item.parent !== actor) return false;
+  if (getItemTab(item) !== 'inventory') return false;
+
+  const sourceContainerId = item.system?.container ?? null;
+  const excludedContainerIds = new Set(sourceContainerId ? [sourceContainerId] : []);
+  const triedContainerIds = new Set();
+
+  const tryContainerList = async (containers = []) => {
+    for (const targetContainer of containers) {
+      if (!targetContainer || triedContainerIds.has(targetContainer.id)) continue;
+      triedContainerIds.add(targetContainer.id);
+
+      const moved = await moveItemToContainer(app, item, targetContainer, {
+        amount: Math.max(1, Number(item.system?.quantity ?? 1)),
+        skipQuantityPrompt: true,
+        suppressNotifications: true
+      });
+      if (moved) return true;
+    }
+    return false;
+  };
+
+  if (sourceContainerId) {
+    if (await quickTransferItemToRoot(app, item)) return true;
+    if (await tryContainerList(getQuickTransferEquippedContainers(actor, item, { excludeContainerIds: excludedContainerIds }))) return true;
+    if (await tryContainerList(getOpenQuickTransferContainers(actor, item, { excludeContainerIds: excludedContainerIds }))) return true;
+    warnQuickTransferUnavailable();
+    return false;
+  }
+
+  if (await tryContainerList(getOpenQuickTransferContainers(actor, item, { excludeContainerIds: excludedContainerIds }))) return true;
+  if (await tryContainerList(getQuickTransferEquippedContainers(actor, item, { excludeContainerIds: excludedContainerIds }))) return true;
+
+  warnQuickTransferUnavailable();
+  return false;
 }
 
 function bringOpenContainerWindowsToFront(actorLike) {
@@ -3482,6 +3729,7 @@ function focusApplicationWindow(app) {
   try {
     app.bringToTop?.();
   } catch (_) { /* ignore */ }
+  markApplicationWindowFocus(app);
 }
 
 async function openContainerWindow(containerItem) {
@@ -3698,6 +3946,11 @@ class CellInventoryContainerWindow extends Application {
     super.activateListeners(html);
     if (!this.containerItem) return;
 
+    html.off('.cis-container-window-focus');
+    html.on('pointerdown.cis-container-window-focus mousedown.cis-container-window-focus', () => {
+      markApplicationWindowFocus(this);
+    });
+
     html.find('.item-tooltip').each((_, element) => {
       applyItemTooltips(element, this);
     });
@@ -3723,6 +3976,12 @@ function activateContainerWindowGrid(app, html) {
     if (!itemElement) return;
     const item = app.actor?.items?.get(itemElement.dataset.itemId);
     if (!item) return;
+    if (isQuickTransferEvent(event) && getItemTab(item) === 'inventory') {
+      event.preventDefault();
+      event.stopPropagation();
+      await quickTransferItem(app, item);
+      return;
+    }
 
     if (event.shiftKey && (item.system?.equipped !== undefined)) {
       event.preventDefault();
@@ -4055,27 +4314,45 @@ async function _legacyMoveItemToContainer(app, droppedItem, containerItem, dropD
 }
 
 function normalizeMoveItemToContainerOptions(options = null) {
-  if (options && typeof options === 'object' && !Array.isArray(options) && ('dropData' in options || 'position' in options)) {
+  if (options && typeof options === 'object' && !Array.isArray(options) && (
+    'dropData' in options
+    || 'position' in options
+    || 'amount' in options
+    || 'skipQuantityPrompt' in options
+    || 'suppressNotifications' in options
+  )) {
     return {
       dropData: options.dropData ?? null,
-      position: options.position ?? null
+      position: options.position ?? null,
+      amount: Number.isFinite(Number(options.amount)) ? Math.max(1, Math.floor(Number(options.amount))) : null,
+      skipQuantityPrompt: options.skipQuantityPrompt === true,
+      suppressNotifications: options.suppressNotifications === true
     };
   }
 
   return {
     dropData: options ?? null,
-    position: null
+    position: null,
+    amount: null,
+    skipQuantityPrompt: false,
+    suppressNotifications: false
   };
 }
 
 async function moveItemToContainer(app, droppedItem, containerItem, options = null) {
-  const { dropData = null, position = null } = normalizeMoveItemToContainerOptions(options);
+  const {
+    dropData = null,
+    position = null,
+    amount: requestedAmount = null,
+    skipQuantityPrompt = false,
+    suppressNotifications = false
+  } = normalizeMoveItemToContainerOptions(options);
   const isSameActorItem = droppedItem?.parent === app.actor;
   const isPaperDollDrop = isPaperDollSourceDropData(dropData) || isPaperDollInventoryHidden(droppedItem);
   const isRepositionInSameContainer = isSameActorItem && (droppedItem.system?.container === containerItem.id);
 
   if (isRepositionInSameContainer) {
-    if (!position) return;
+    if (!position) return false;
     const sourceItem = isPaperDollDrop
       ? await normalizePaperDollDraggedItem(app, droppedItem, dropData, { cisSkipAutoUnequipPlacement: true })
       : droppedItem;
@@ -4088,21 +4365,21 @@ async function moveItemToContainer(app, droppedItem, containerItem, options = nu
       layoutState.gridDimensions
     );
     if (!placementState.isValid) {
-      ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.SlotCapacityExceeded'));
-      return;
+      if (!suppressNotifications) ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.SlotCapacityExceeded'));
+      return false;
     }
     await sourceItem.update({
       [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: placementState.position
     }, {
       cisSkipAutoUnequipPlacement: true
     });
-    return;
+    return true;
   }
 
   const qty = Number(droppedItem.system?.quantity ?? 1);
   if (!isItemAllowedByCategory(containerItem, droppedItem)) {
-    ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.CategoryReject'));
-    return;
+    if (!suppressNotifications) ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.CategoryReject'));
+    return false;
   }
 
   const fitState = await computeMaxFittableQuantity(containerItem, droppedItem, {
@@ -4113,13 +4390,22 @@ async function moveItemToContainer(app, droppedItem, containerItem, options = nu
     const reasonKey = fitState.reason === 'slots'
       ? 'CUSTOM_SECTIONS.SlotCapacityExceeded'
       : 'CUSTOM_SECTIONS.CapacityExceeded';
-    ui.notifications?.warn?.(game.i18n.localize(reasonKey));
-    return;
+    if (!suppressNotifications) ui.notifications?.warn?.(game.i18n.localize(reasonKey));
+    return false;
   }
 
-  let amount = Math.min(qty, fitState.maxQuantity);
-  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: fitState.maxQuantity });
-  if (!amount || amount < 1) return;
+  let amount = requestedAmount ?? Math.min(qty, fitState.maxQuantity);
+  if (amount > fitState.maxQuantity) {
+    const reasonKey = fitState.reason === 'slots'
+      ? 'CUSTOM_SECTIONS.SlotCapacityExceeded'
+      : 'CUSTOM_SECTIONS.CapacityExceeded';
+    if (!suppressNotifications) ui.notifications?.warn?.(game.i18n.localize(reasonKey));
+    return false;
+  }
+  if (requestedAmount == null && qty > 1 && !skipQuantityPrompt) {
+    amount = await promptForQuantity({ title: droppedItem.name, max: fitState.maxQuantity });
+  }
+  if (!amount || amount < 1) return false;
 
   if (isSameActorItem) {
     const sourceItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData, {
@@ -4149,11 +4435,11 @@ async function moveItemToContainer(app, droppedItem, containerItem, options = nu
         [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: fitState.position
       });
     }
-    return;
+    return true;
   }
 
   const data = droppedItem?.toObject ? droppedItem.toObject() : droppedItem;
-  if (!data) return;
+  if (!data) return false;
   data.system = data.system ?? {};
   data.system.quantity = amount;
 
@@ -4165,16 +4451,48 @@ async function moveItemToContainer(app, droppedItem, containerItem, options = nu
     foundry.utils.setProperty(data, `flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`, fitState.position);
     await app.actor.createEmbeddedDocuments('Item', [data]);
   }
+  return true;
 }
 
-async function moveItemToRoot(app, droppedItem, dropData = null) {
+function normalizeMoveItemToRootOptions(options = null) {
+  if (options && typeof options === 'object' && !Array.isArray(options) && (
+    'dropData' in options
+    || 'amount' in options
+    || 'skipQuantityPrompt' in options
+    || 'suppressNotifications' in options
+  )) {
+    return {
+      dropData: options.dropData ?? null,
+      amount: Number.isFinite(Number(options.amount)) ? Math.max(1, Math.floor(Number(options.amount))) : null,
+      skipQuantityPrompt: options.skipQuantityPrompt === true,
+      suppressNotifications: options.suppressNotifications === true
+    };
+  }
+
+  return {
+    dropData: options ?? null,
+    amount: null,
+    skipQuantityPrompt: false,
+    suppressNotifications: false
+  };
+}
+
+async function moveItemToRoot(app, droppedItem, options = null) {
+  const {
+    dropData = null,
+    amount: requestedAmount = null,
+    skipQuantityPrompt = false
+  } = normalizeMoveItemToRootOptions(options);
   const normalizedItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData, {
     cisSkipAutoUnequipPlacement: true
   });
   const qty = Number(normalizedItem.system?.quantity ?? 1);
-  let amount = qty;
-  if (qty > 1) amount = await promptForQuantity({ title: normalizedItem.name, max: qty });
-  if (!amount || amount < 1) return;
+  let amount = requestedAmount ?? qty;
+  if (amount > qty) amount = qty;
+  if (requestedAmount == null && qty > 1 && !skipQuantityPrompt) {
+    amount = await promptForQuantity({ title: normalizedItem.name, max: qty });
+  }
+  if (!amount || amount < 1) return false;
 
   if (normalizedItem?.parent === app.actor) {
     const mergeTarget = findMergeTarget(app.actor, normalizedItem, null);
@@ -4197,11 +4515,11 @@ async function moveItemToRoot(app, droppedItem, dropData = null) {
         await normalizedItem.update({ 'system.container': null });
       }
     }
-    return;
+    return true;
   }
 
   const data = normalizedItem?.toObject ? normalizedItem.toObject() : normalizedItem;
-  if (!data) return;
+  if (!data) return false;
   data.system = data.system ?? {};
   data.system.quantity = amount;
   const mergeTarget = findMergeTarget(app.actor, data, null);
@@ -4211,6 +4529,7 @@ async function moveItemToRoot(app, droppedItem, dropData = null) {
     foundry.utils.setProperty(data, 'system.container', null);
     await app.actor.createEmbeddedDocuments('Item', [data]);
   }
+  return true;
 }
 
 // Поиск подходящего стека для слияния в указанной локации (containerId или null)
