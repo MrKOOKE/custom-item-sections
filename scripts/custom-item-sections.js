@@ -103,6 +103,7 @@ const savedItemSheetScroll = new Map();
 const cellInventoryPositionCacheByActor = new Map();
 let activeCellInventoryDrag = null;
 let transparentDragImage = null;
+let ownedItemDragPreview = null;
 const pendingAutoUnequipPlacementTimers = new Map();
 
 function getExpandedContainersForActor(actorId) {
@@ -117,6 +118,175 @@ function getTransparentDragImage() {
   canvas.height = 1;
   transparentDragImage = canvas;
   return transparentDragImage;
+}
+
+function normalizeOwnedItemDragOptions(extra = {}) {
+  const options = (extra && typeof extra === 'object' && !Array.isArray(extra)) ? extra : {};
+  const {
+    sourceElement = null,
+    ...dragDataExtra
+  } = options;
+
+  return { sourceElement, dragDataExtra };
+}
+
+function getOwnedItemDragSourceElement(event, explicitSource = null) {
+  if (explicitSource instanceof HTMLElement) return explicitSource;
+
+  if (event?.currentTarget instanceof HTMLElement) return event.currentTarget;
+  if (event?.target instanceof HTMLElement) return event.target;
+  if (event?.originalEvent?.currentTarget instanceof HTMLElement) return event.originalEvent.currentTarget;
+  if (event?.originalEvent?.target instanceof HTMLElement) return event.originalEvent.target;
+
+  return null;
+}
+
+function getOwnedItemDragPreviewDocument(sourceElement = null, nativeEvent = null) {
+  return sourceElement?.ownerDocument
+    ?? nativeEvent?.view?.document
+    ?? document;
+}
+
+function ensureOwnedItemDragPreview(doc = document) {
+  if (ownedItemDragPreview?.ownerDocument === doc && ownedItemDragPreview.isConnected) return ownedItemDragPreview;
+
+  ownedItemDragPreview = doc.createElement('div');
+  ownedItemDragPreview.className = 'cis-owned-item-drag-image';
+  ownedItemDragPreview.setAttribute('aria-hidden', 'true');
+  ownedItemDragPreview.innerHTML = `
+    <div class="cis-owned-item-drag-image-card">
+      <img class="cis-owned-item-drag-image-asset" alt="" />
+      <span class="cis-owned-item-drag-image-qty"></span>
+    </div>
+  `;
+
+  (doc.body ?? doc.documentElement)?.appendChild(ownedItemDragPreview);
+  return ownedItemDragPreview;
+}
+
+function normalizeOwnedItemDragPreviewSize(width, height) {
+  let normalizedWidth = Math.max(1, Math.round(Number(width) || 0));
+  let normalizedHeight = Math.max(1, Math.round(Number(height) || 0));
+
+  if (!(normalizedWidth > 0) || !(normalizedHeight > 0)) {
+    normalizedWidth = 96;
+    normalizedHeight = 96;
+  }
+
+  const minSide = 48;
+  const maxSide = 220;
+  const minCurrentSide = Math.min(normalizedWidth, normalizedHeight);
+  const maxCurrentSide = Math.max(normalizedWidth, normalizedHeight);
+
+  let scale = 1;
+  if (maxCurrentSide > maxSide) scale = Math.min(scale, maxSide / maxCurrentSide);
+  if (minCurrentSide > 0 && minCurrentSide < minSide) scale = Math.max(scale, minSide / minCurrentSide);
+
+  return {
+    width: Math.max(1, Math.round(normalizedWidth * scale)),
+    height: Math.max(1, Math.round(normalizedHeight * scale)),
+    scale
+  };
+}
+
+function parseOwnedItemDragPixelValue(value) {
+  const numeric = Number.parseFloat(String(value ?? '').trim());
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function getOwnedItemDragPreviewCellSize(sourceElement = null) {
+  const doc = sourceElement?.ownerDocument ?? document;
+  const roots = [
+    sourceElement?.closest?.('.window-app'),
+    sourceElement?.closest?.('.app'),
+    sourceElement?.closest?.('.cis-tarkov-shell'),
+    doc
+  ].filter(Boolean);
+
+  for (const root of roots) {
+    const cell = root?.querySelector?.('.cis-cell-inventory-cell');
+    const rect = cell?.getBoundingClientRect?.();
+    const width = Number(rect?.width) || 0;
+    const height = Number(rect?.height) || 0;
+    if (width > 0 && height > 0) {
+      return { width, height };
+    }
+  }
+
+  const styleTargets = [
+    sourceElement?.closest?.('.cis-tarkov-shell'),
+    sourceElement?.closest?.('.window-app'),
+    sourceElement,
+    doc?.documentElement
+  ].filter(Boolean);
+
+  for (const target of styleTargets) {
+    try {
+      const computed = getComputedStyle(target);
+      const size = parseOwnedItemDragPixelValue(computed?.getPropertyValue('--cis-cell-size'));
+      if (size) return { width: size, height: size };
+    } catch (_) { /* ignore */ }
+  }
+
+  return {
+    width: CELL_INVENTORY.cellSize,
+    height: CELL_INVENTORY.cellSize
+  };
+}
+
+function getOwnedItemDragPreviewMetrics(item, sourceElement = null) {
+  const itemSize = getCellInventorySize(item);
+  const cellSize = getOwnedItemDragPreviewCellSize(sourceElement);
+  const rawWidth = Math.max(1, itemSize.width * cellSize.width);
+  const rawHeight = Math.max(1, itemSize.height * cellSize.height);
+  const normalizedSize = normalizeOwnedItemDragPreviewSize(rawWidth, rawHeight);
+  const scale = Number(normalizedSize.scale) || 1;
+
+  return {
+    width: normalizedSize.width,
+    height: normalizedSize.height,
+    cellWidth: Math.max(1, Math.round(cellSize.width * scale)),
+    cellHeight: Math.max(1, Math.round(cellSize.height * scale)),
+    columns: itemSize.width,
+    rows: itemSize.height
+  };
+}
+
+function updateOwnedItemDragPreview(preview, item, sourceElement = null) {
+  if (!preview || !item) {
+    return {
+      width: 96,
+      height: 96,
+      cellWidth: 96,
+      cellHeight: 96,
+      columns: 1,
+      rows: 1
+    };
+  }
+
+  const size = getOwnedItemDragPreviewMetrics(item, sourceElement);
+  const image = preview.querySelector('.cis-owned-item-drag-image-asset');
+  const qty = preview.querySelector('.cis-owned-item-drag-image-qty');
+  const quantity = Number(item.system?.quantity ?? 1);
+
+  preview.style.width = `${size.width}px`;
+  preview.style.height = `${size.height}px`;
+  preview.style.setProperty('--cis-owned-item-drag-cell-width', `${size.cellWidth}px`);
+  preview.style.setProperty('--cis-owned-item-drag-cell-height', `${size.cellHeight}px`);
+  preview.style.setProperty('--cis-owned-item-drag-columns', String(size.columns));
+  preview.style.setProperty('--cis-owned-item-drag-rows', String(size.rows));
+
+  if (image) {
+    image.src = item.img || '';
+    image.alt = item.name || '';
+  }
+
+  if (qty) {
+    qty.textContent = quantity > 1 ? String(quantity) : '';
+    qty.hidden = quantity <= 1;
+  }
+
+  return size;
 }
 
 function setActiveCellInventoryDrag(state) {
@@ -142,15 +312,27 @@ function buildOwnedItemDragData(actor, item, extra = {}) {
 function beginOwnedItemSheetDrag(actor, item, event, extra = {}) {
   const nativeEvent = event?.originalEvent ?? event;
   if (!actor || !item || !nativeEvent?.dataTransfer) return null;
+  const { sourceElement, dragDataExtra } = normalizeOwnedItemDragOptions(extra);
+  const dragSourceElement = getOwnedItemDragSourceElement(event, sourceElement);
 
   hideActiveTooltip();
 
-  const dragData = buildOwnedItemDragData(actor, item, extra);
+  const dragData = buildOwnedItemDragData(actor, item, dragDataExtra);
   nativeEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
   nativeEvent.dataTransfer.effectAllowed = 'copyMove';
   try {
-    nativeEvent.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
-  } catch (_) { /* ignore */ }
+    const dragPreview = ensureOwnedItemDragPreview(getOwnedItemDragPreviewDocument(dragSourceElement, nativeEvent));
+    const dragPreviewSize = updateOwnedItemDragPreview(dragPreview, item, dragSourceElement);
+    nativeEvent.dataTransfer.setDragImage(
+      dragPreview,
+      Math.round(dragPreviewSize.width / 2),
+      Math.round(dragPreviewSize.height / 2)
+    );
+  } catch (_) {
+    try {
+      nativeEvent.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
+    } catch (_) { /* ignore */ }
+  }
 
   setActiveCellInventoryDrag({
     actorId: actor.id,
@@ -1453,19 +1635,28 @@ function warnCellInventoryDoesNotFit() {
   ));
 }
 
-function getCellInventoryGridPositionFromEvent(gridElement, event, gridDimensions = CELL_INVENTORY) {
+function getCellInventoryDragAnchorOffset(size = { width: 1, height: 1 }) {
+  return {
+    x: Math.max(0, Math.floor(Number(size?.width ?? 1) / 2)),
+    y: Math.max(0, Math.floor(Number(size?.height ?? 1) / 2))
+  };
+}
+
+function getCellInventoryGridPositionFromEvent(gridElement, event, gridDimensions = CELL_INVENTORY, size = { width: 1, height: 1 }) {
   const doc = gridElement?.ownerDocument ?? document;
   const clientX = Number(event?.clientX);
   const clientY = Number(event?.clientY);
+  const dragSize = sanitizeCellInventorySize(size);
+  const anchorOffset = getCellInventoryDragAnchorOffset(dragSize);
 
   if (Number.isFinite(clientX) && Number.isFinite(clientY) && typeof doc.elementsFromPoint === 'function') {
     const elements = doc.elementsFromPoint(clientX, clientY);
     const cell = elements.find(element => element?.classList?.contains?.('cis-cell-inventory-cell'));
     if (cell) {
       return sanitizeCellInventoryPosition({
-        x: Number(cell.dataset.gridX),
-        y: Number(cell.dataset.gridY)
-      }, { width: 1, height: 1 }, gridDimensions);
+        x: Number(cell.dataset.gridX) - anchorOffset.x,
+        y: Number(cell.dataset.gridY) - anchorOffset.y
+      }, dragSize, gridDimensions);
     }
   }
 
@@ -1474,9 +1665,9 @@ function getCellInventoryGridPositionFromEvent(gridElement, event, gridDimension
   const cellRect = sampleCell?.getBoundingClientRect?.();
   const cellWidth = Math.max(1, Math.round(Number(cellRect?.width) || CELL_INVENTORY.cellSize));
   const cellHeight = Math.max(1, Math.round(Number(cellRect?.height) || CELL_INVENTORY.cellSize));
-  const x = Math.floor((clientX - rect.left) / cellWidth);
-  const y = Math.floor((clientY - rect.top) / cellHeight);
-  return sanitizeCellInventoryPosition({ x, y }, { width: 1, height: 1 }, gridDimensions);
+  const x = Math.floor((clientX - rect.left) / cellWidth) - anchorOffset.x;
+  const y = Math.floor((clientY - rect.top) / cellHeight) - anchorOffset.y;
+  return sanitizeCellInventoryPosition({ x, y }, dragSize, gridDimensions);
 }
 
 function setCellInventoryDragTarget(root, position, size, isValid = true, scopeRoot = root) {
@@ -2102,12 +2293,13 @@ function applyCellInventory(app, html) {
     const nativeEvent = event.originalEvent ?? event;
     const scopeContext = getCellInventoryGridScopeContext(app, event.currentTarget);
     if (!scopeContext.layoutState) return;
+    const { dragSize, ignoredIds } = getCellInventoryDragState(app, nativeEvent);
     const targetPosition = getCellInventoryGridPositionFromEvent(
       event.currentTarget,
       nativeEvent,
-      scopeContext.layoutState.gridDimensions
+      scopeContext.layoutState.gridDimensions,
+      dragSize
     );
-    const { dragSize, ignoredIds } = getCellInventoryDragState(app, nativeEvent);
     const placementState = getCellInventoryPlacementState(scopeContext.layoutState, targetPosition, dragSize, ignoredIds);
     const isValid = placementState.isValid;
     if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = isValid ? 'move' : 'none';
@@ -2123,7 +2315,7 @@ function applyCellInventory(app, html) {
     const nativeEvent = event.originalEvent ?? event;
     event.stopImmediatePropagation();
     nativeEvent.stopImmediatePropagation?.();
-    const { dropData } = getCellInventoryDragState(app, nativeEvent, { readDropData: true });
+    const { dropData, dragSize } = getCellInventoryDragState(app, nativeEvent, { readDropData: true });
     clearCellInventoryDragState(host);
     finishOwnedItemSheetDrag();
     if (!dropData) return;
@@ -2136,7 +2328,8 @@ function applyCellInventory(app, html) {
     const targetPosition = getCellInventoryGridPositionFromEvent(
       event.currentTarget,
       nativeEvent,
-      scopeContext.layoutState.gridDimensions
+      scopeContext.layoutState.gridDimensions,
+      dragSize
     );
     if (!targetPosition) return;
 

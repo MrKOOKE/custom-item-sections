@@ -178,6 +178,85 @@
   padding: 0;
 }
 
+.cis-owned-item-drag-image {
+  --cis-owned-item-drag-cell-width: 96px;
+  --cis-owned-item-drag-cell-height: 96px;
+  position: fixed;
+  left: -10000px;
+  top: -10000px;
+  z-index: -1;
+  display: block;
+  width: 96px;
+  height: 96px;
+  pointer-events: none;
+  contain: layout paint style;
+}
+
+.cis-owned-item-drag-image-card {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(232, 212, 136, 0.46);
+  border-radius: calc(10px * var(--cis-ui-scale, 1));
+  background:
+    linear-gradient(180deg, rgba(24, 27, 35, 0.96), rgba(8, 10, 15, 0.98)),
+    linear-gradient(135deg, rgba(232, 212, 136, 0.14), transparent 65%);
+  box-shadow:
+    0 10px 24px rgba(0, 0, 0, 0.34),
+    inset 0 0 0 1px rgba(255, 245, 201, 0.08);
+}
+
+.cis-owned-item-drag-image-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(
+      to right,
+      transparent 0,
+      transparent calc(var(--cis-owned-item-drag-cell-width) - 1px),
+      rgba(232, 212, 136, 0.22) calc(var(--cis-owned-item-drag-cell-width) - 1px),
+      rgba(232, 212, 136, 0.22) var(--cis-owned-item-drag-cell-width)
+    ),
+    repeating-linear-gradient(
+      to bottom,
+      transparent 0,
+      transparent calc(var(--cis-owned-item-drag-cell-height) - 1px),
+      rgba(232, 212, 136, 0.22) calc(var(--cis-owned-item-drag-cell-height) - 1px),
+      rgba(232, 212, 136, 0.22) var(--cis-owned-item-drag-cell-height)
+    );
+  pointer-events: none;
+}
+
+.cis-owned-item-drag-image-asset {
+  position: absolute;
+  inset: calc(4px * var(--cis-ui-scale, 1));
+  display: block;
+  width: calc(100% - calc(8px * var(--cis-ui-scale, 1)));
+  height: calc(100% - calc(8px * var(--cis-ui-scale, 1)));
+  object-fit: contain;
+  border: 0;
+  border-radius: calc(8px * var(--cis-ui-scale, 1));
+  z-index: 1;
+}
+
+.cis-owned-item-drag-image-qty {
+  position: absolute;
+  right: calc(0.28rem * var(--cis-ui-scale, 1));
+  bottom: calc(0.28rem * var(--cis-ui-scale, 1));
+  min-width: calc(1.25rem * var(--cis-ui-scale, 1));
+  padding: 0 calc(0.26rem * var(--cis-ui-scale, 1));
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.76);
+  color: #fff2b6;
+  font-size: calc(0.68rem * var(--cis-ui-scale, 1));
+  line-height: 1.3;
+  text-align: center;
+  z-index: 2;
+}
+
 .tab.inventory .cis-cell-inventory-shell {
   display: flex;
   flex-direction: column;

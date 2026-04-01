@@ -688,7 +688,6 @@ Hooks.once("init", () => {
           activeDragSource = null;
           clearCompatibleSlotHighlights(root);
           clearDragOverHighlights(root);
-          clearSheetDragGhost(root);
           return;
         }
 
@@ -699,16 +698,10 @@ Hooks.once("init", () => {
           : null;
         activeDragSource?.classList?.add?.("dragging");
 
-        updateSheetDragGhost(root, item, event);
-
         globalThis.requestAnimationFrame(() => {
+          if (!activeDragItem || activeDragItem.id !== item.id) return;
           applyCompatibleSlotHighlights(root, this, item);
         });
-      };
-
-      const moveHighlight = (event) => {
-        if (!activeDragItem) return;
-        updateSheetDragGhost(root, activeDragItem, event);
       };
 
       const endHighlight = () => {
@@ -717,11 +710,9 @@ Hooks.once("init", () => {
         activeDragSource = null;
         clearCompatibleSlotHighlights(root);
         clearDragOverHighlights(root);
-        clearSheetDragGhost(root);
       };
 
       root.addEventListener("dragstart", beginHighlight, true);
-      root.addEventListener("dragover", moveHighlight, true);
       root.addEventListener("dragend", endHighlight, true);
       root.addEventListener("drop", endHighlight, true);
     }
