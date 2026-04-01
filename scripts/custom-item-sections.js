@@ -2842,4 +2842,4 @@ async function computeMaxFittableQuantity(containerItem, itemLike) {
   }
 }
 
-export { applyCellInventory };
+export { applyCellInventory, applyItemTooltips };

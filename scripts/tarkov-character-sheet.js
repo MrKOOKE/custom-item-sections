@@ -1,4 +1,4 @@
-import { applyCellInventory } from "./custom-item-sections.js";
+import { applyCellInventory, applyItemTooltips } from "./custom-item-sections.js";
 import {
   ArmorHandler as ImportedArmorHandler,
   PaperDollArmor as ImportedPaperDollArmor
@@ -144,6 +144,7 @@ function buildGearSlots(actor) {
       return {
         slotIndex,
         coverageArea: areaName,
+        itemId: item?.id ?? "",
         itemName: item?.name ?? areaName,
         itemImage: item?.img ?? "",
         itemColor: item ? getItemColor(item) : "",
@@ -196,6 +197,7 @@ function buildWeaponSets(actor) {
     return {
       setKey: String(setKey),
       handLabel,
+      itemId: item?.id ?? "",
       itemName: item?.name ?? handLabel,
       itemImage: item?.img ?? "",
       itemColor: item ? getItemColor(item) : "",
@@ -496,6 +498,9 @@ Hooks.once("init", () => {
       this.#activateGearSlots(html);
       this.#activateWeaponSets(html);
       this.#activateDragHighlights(html);
+      html.find(".cis-loadout-pane .item-tooltip").each((_, element) => {
+        applyItemTooltips(element, this);
+      });
 
       html.find('[data-action="header-button"]').on("click", (event) => {
         event.preventDefault();

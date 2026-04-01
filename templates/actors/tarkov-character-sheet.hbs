@@ -44,11 +44,12 @@
                     <div class="cis-gear-card-body {{#if gearSlot.multiSlot}}is-multi{{/if}}">
                       {{#each gearSlot.slots as |slot|}}
                         <div
-                          class="cis-gear-slot {{#if slot.empty}}is-empty{{/if}}"
+                          class="cis-gear-slot {{#if slot.empty}}is-empty{{else}}item-tooltip{{/if}}"
                           data-id="{{slot.coverageArea}}"
                           data-index="{{slot.slotIndex}}"
                           data-slot-area="{{slot.coverageArea}}"
                           data-slot-index="{{slot.slotIndex}}"
+                          {{#unless slot.empty}}data-item-id="{{slot.itemId}}"{{/unless}}
                         >
                           {{#if slot.empty}}
                             <span class="cis-gear-slot-empty">Пусто</span>
@@ -85,8 +86,9 @@
                           <div class="cis-weapon-set-slot-label">{{slot.handLabel}}</div>
 
                           <div
-                            class="cis-weapon-slot {{#if slot.empty}}is-empty{{/if}} {{#if slot.phantom}}is-phantom{{/if}}"
+                            class="cis-weapon-slot {{#if slot.empty}}is-empty{{else}}item-tooltip{{/if}} {{#if slot.phantom}}is-phantom{{/if}}"
                             data-ech-set="{{slot.setKey}}"
+                            {{#unless slot.empty}}data-item-id="{{slot.itemId}}"{{/unless}}
                             {{#unless slot.empty}}draggable="true"{{/unless}}
                           >
                             {{#if slot.empty}}
