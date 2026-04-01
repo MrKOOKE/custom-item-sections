@@ -1,5 +1,7 @@
 // Константы модуля
 const MODULE_ID = 'custom-item-sections';
+const PAPER_DOLL_MODULE_ID = 'blok-upravleniya';
+const PAPER_DOLL_HIDE_INVENTORY_FLAG = 'paperDollHiddenInInventory';
 const CELL_INVENTORY = Object.freeze({
   columns: 10,
   rows: 10,
@@ -73,6 +75,16 @@ function isIconGridInventoryEnabled() {
     return false;
   }
 }
+
+function isPaperDollInventoryHidden(itemLike) {
+  try {
+    if (typeof itemLike?.getFlag === 'function') {
+      return itemLike.getFlag(PAPER_DOLL_MODULE_ID, PAPER_DOLL_HIDE_INVENTORY_FLAG) === true;
+    }
+  } catch (_) { /* ignore */ }
+  return foundry.utils.getProperty(itemLike, `flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`) === true;
+}
+
 function hideActiveTooltip() {
   try {
     requestAnimationFrame(() => game.tooltip?.deactivate?.());
@@ -107,6 +119,92 @@ function setActiveCellInventoryDrag(state) {
     size: sanitizeCellInventorySize(state.size),
     type: state.type ?? 'Item'
   } : null;
+}
+
+function buildOwnedItemDragData(actor, item, extra = {}) {
+  return {
+    type: 'Item',
+    id: item?.id ?? null,
+    uuid: item?.uuid ?? null,
+    actorId: actor?.id ?? null,
+    actorUuid: actor?.uuid ?? null,
+    ...extra
+  };
+}
+
+function beginOwnedItemSheetDrag(actor, item, event, extra = {}) {
+  const nativeEvent = event?.originalEvent ?? event;
+  if (!actor || !item || !nativeEvent?.dataTransfer) return null;
+
+  hideActiveTooltip();
+
+  const dragData = buildOwnedItemDragData(actor, item, extra);
+  nativeEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
+  nativeEvent.dataTransfer.effectAllowed = 'copyMove';
+  try {
+    nativeEvent.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
+  } catch (_) { /* ignore */ }
+
+  setActiveCellInventoryDrag({
+    actorId: actor.id,
+    itemId: item.id,
+    size: getCellInventorySize(item),
+    type: 'Item'
+  });
+
+  return dragData;
+}
+
+function finishOwnedItemSheetDrag() {
+  setActiveCellInventoryDrag(null);
+}
+
+function isPaperDollSourceDropData(dropData) {
+  return Boolean(dropData?.fromSlot || dropData?.fromEchSet);
+}
+
+async function normalizePaperDollDraggedItem(app, droppedItem, dropData = null) {
+  if (!app?.actor || !droppedItem || droppedItem.parent !== app.actor) return droppedItem;
+  if (!isPaperDollSourceDropData(dropData) && !isPaperDollInventoryHidden(droppedItem)) return droppedItem;
+
+  const updateData = {};
+  if (droppedItem.system?.equipped) updateData['system.equipped'] = false;
+  updateData[`flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`] = false;
+
+  await droppedItem.update(updateData);
+  return app.actor.items.get(droppedItem.id) ?? droppedItem;
+}
+
+async function movePaperDollDraggedItemToCell(app, droppedItem, position, dropData = null) {
+  if (!app?.actor || !droppedItem || droppedItem.parent !== app.actor) return false;
+
+  const size = getCellInventorySize(droppedItem);
+  const normalized = sanitizeCellInventoryPosition(position, size);
+  if (!normalized) {
+    warnCellInventoryDoesNotFit();
+    return false;
+  }
+
+  const layoutState = collectCellInventoryLayoutState(app.actor);
+  const placementState = getCellInventoryPlacementState(layoutState, normalized, size, new Set([droppedItem.id]));
+  if (!placementState.isValid) {
+    warnCellInventoryDoesNotFit();
+    return false;
+  }
+
+  const updateData = {
+    _id: droppedItem.id,
+    "system.container": null,
+    [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: placementState.position
+  };
+
+  if (isPaperDollSourceDropData(dropData) || isPaperDollInventoryHidden(droppedItem)) {
+    if (droppedItem.system?.equipped) updateData["system.equipped"] = false;
+    updateData[`flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`] = false;
+  }
+
+  await app.actor.updateEmbeddedDocuments("Item", [updateData]);
+  return true;
 }
 
 function getCellInventoryPositionCache(actorId) {
@@ -771,17 +869,12 @@ function applyGridInventory(app, html) {
     const itemId = li.dataset.itemId;
     const item = app.actor.items.get(itemId);
     if (!item) return;
-    hideActiveTooltip();
-    const dragData = { type: 'Item', id: item.id, uuid: item.uuid, actorId: app.actor.id, actorUuid: app.actor.uuid };
-    if (event.originalEvent?.dataTransfer) {
-      event.originalEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
-      event.originalEvent.dataTransfer.effectAllowed = 'copyMove';
-    }
-    if (event.originalEvent?.dataTransfer) event.originalEvent.dataTransfer.effectAllowed = 'copyMove';
+    beginOwnedItemSheetDrag(app.actor, item, event);
     li.classList.add('dragging');
   });
   inventoryTabs.on('dragend.cis-grid', '.cis-grid-item', (event) => {
     const li = event.currentTarget.closest('.item');
+    finishOwnedItemSheetDrag();
     if (li) li.classList.remove('dragging');
   });
   inventoryTabs.on('dragover.cis-grid', '.cis-grid-item', (event) => {
@@ -803,9 +896,9 @@ function applyGridInventory(app, html) {
       const dropped = await resolveDroppedItem(app, dropData);
       if (!dropped) return;
       if (targetItem.type === 'container' && dropped.id !== targetItem.id) {
-        await moveItemToContainer(app, dropped, targetItem);
+        await moveItemToContainer(app, dropped, targetItem, dropData);
       } else {
-        await moveItemToRoot(app, dropped);
+        await moveItemToRoot(app, dropped, dropData);
       }
     } catch (e) {
       console.error(`${MODULE_ID} | drop.cis-grid error`, e);
@@ -814,7 +907,7 @@ function applyGridInventory(app, html) {
 }
 
 function getCellInventoryRootItems(actor) {
-  return actor.items.filter(item => !item.system?.container && getItemTab(item) === 'inventory');
+  return actor.items.filter(item => !item.system?.container && getItemTab(item) === 'inventory' && !isPaperDollInventoryHidden(item));
 }
 
 function sanitizeCellInventorySize(value) {
@@ -1520,35 +1613,13 @@ function applyCellInventory(app, html) {
     if (!itemElement) return;
     const item = app.actor.items.get(itemElement.dataset.itemId);
     if (!item) return;
-    hideActiveTooltip();
-
-    const dragData = {
-      type: 'Item',
-      id: item.id,
-      uuid: item.uuid,
-      actorId: app.actor.id,
-      actorUuid: app.actor.uuid
-    };
-    const nativeEvent = event.originalEvent ?? event;
-    if (nativeEvent.dataTransfer) {
-      nativeEvent.dataTransfer.setData('text/plain', JSON.stringify(dragData));
-      nativeEvent.dataTransfer.effectAllowed = 'copyMove';
-      try {
-        nativeEvent.dataTransfer.setDragImage(getTransparentDragImage(), 0, 0);
-      } catch (_) { /* ignore */ }
-    }
-    setActiveCellInventoryDrag({
-      actorId: app.actor.id,
-      itemId: item.id,
-      size: getCellInventorySize(item),
-      type: 'Item'
-    });
+    beginOwnedItemSheetDrag(app.actor, item, event);
     itemElement.classList.add('dragging');
   });
 
   host.on('dragend.cis-cell-inventory', '.cis-cell-inventory-item', () => {
     clearCellInventoryDragState(host);
-    setActiveCellInventoryDrag(null);
+    finishOwnedItemSheetDrag();
   });
 
   host.on('dragover.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
@@ -1573,13 +1644,17 @@ function applyCellInventory(app, html) {
     nativeEvent.stopImmediatePropagation?.();
     const { dropData } = getCellInventoryDragState(app, nativeEvent, { readDropData: true });
     clearCellInventoryDragState(host);
-    setActiveCellInventoryDrag(null);
+    finishOwnedItemSheetDrag();
     if (!dropData) return;
+
+    event.preventDefault();
+    nativeEvent.preventDefault?.();
 
     const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
     if (!targetPosition) return;
 
-    const sameActorItem = (dropData.type === 'Item') && (dropData.actorId === app.actor.id);
+    const droppedItem = await resolveDroppedItem(app, dropData);
+    const sameActorItem = (dropData.type === 'Item') && (droppedItem?.parent === app.actor);
     if (!sameActorItem) {
       event.preventDefault();
       event.stopPropagation();
@@ -1593,26 +1668,30 @@ function applyCellInventory(app, html) {
       return;
     }
 
-    event.preventDefault();
     event.stopPropagation();
 
-    const droppedItem = await resolveDroppedItem(app, dropData);
     if (!droppedItem) return;
-    if (getItemTab(droppedItem) !== 'inventory') return;
+    let localItem = droppedItem;
+    if (getItemTab(localItem) !== 'inventory') return;
     const placementState = getCellInventoryPlacementState(
       layoutState,
       targetPosition,
-      getCellInventorySize(droppedItem),
-      new Set([droppedItem.id])
+      getCellInventorySize(localItem),
+      new Set([localItem.id])
     );
     if (!placementState.isValid) {
       warnCellInventoryDoesNotFit();
       return;
     }
 
-    if (droppedItem.system?.container) {
-      const droppedId = droppedItem.id;
-      await moveItemToRoot(app, droppedItem);
+    if (isPaperDollSourceDropData(dropData) || isPaperDollInventoryHidden(localItem)) {
+      await movePaperDollDraggedItemToCell(app, localItem, placementState.position, dropData);
+      return;
+    }
+
+    if (localItem.system?.container) {
+      const droppedId = localItem.id;
+      await moveItemToRoot(app, localItem, dropData);
       const movedItem = app.actor.items.get(droppedId);
       if (movedItem && !movedItem.system?.container) {
         await moveRootInventoryItemToCell(app, movedItem, placementState.position);
@@ -1620,7 +1699,7 @@ function applyCellInventory(app, html) {
       return;
     }
 
-    await moveRootInventoryItemToCell(app, droppedItem, placementState.position);
+    await moveRootInventoryItemToCell(app, localItem, placementState.position);
   });
 }
 
@@ -1661,8 +1740,9 @@ function addCustomSectionsToDOM(app, html, data) {
   app.actor.items.forEach(item => {
     // Пропускаем предметы, которые уже находятся в контейнерах
     if (item.system?.container) return;
-    const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
     const itemTab = getItemTab(item);
+    if (itemTab === 'inventory' && isPaperDollInventoryHidden(item)) return;
+    const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
     
     // Проверяем, что customSectionName является строкой и не пустая после trim
     if (customSectionName && typeof customSectionName === 'string' && customSectionName.trim()) {
@@ -2298,7 +2378,7 @@ function attachCustomSectionEventHandlers(html, app) {
           const dropData = JSON.parse(str);
           const dropped = await resolveDroppedItem(app, dropData);
           if (!dropped) return;
-          await moveItemToRoot(app, dropped);
+          await moveItemToRoot(app, dropped, dropData);
         } catch (e) { /* ignore */ }
       });
       wiredDropZones.add(inventoryRoot);
@@ -2316,21 +2396,13 @@ function wireItemDragDrop(app, $elements) {
     
       element.draggable = true;
       element.addEventListener('dragstart', (event) => {
-        hideActiveTooltip();
-        const dragData = {
-          type: 'Item',
-          id: item.id,
-          uuid: item.uuid,
-          actorId: app.actor.id,
-          actorUuid: app.actor.uuid
-        };
-      if (event.dataTransfer) {
-        event.dataTransfer.setData('text/plain', JSON.stringify(dragData));
-        event.dataTransfer.effectAllowed = 'copyMove';
-      }
+      beginOwnedItemSheetDrag(app.actor, item, event);
         $element.addClass('dragging');
       });
-    element.addEventListener('dragend', () => $element.removeClass('dragging'));
+    element.addEventListener('dragend', () => {
+      finishOwnedItemSheetDrag();
+      $element.removeClass('dragging');
+    });
       element.addEventListener('dragover', (event) => {
         event.preventDefault();
       event.stopPropagation();
@@ -2346,10 +2418,10 @@ function wireItemDragDrop(app, $elements) {
         const dropped = await resolveDroppedItem(app, dropData);
         if (!dropped) return;
         if (item.type === 'container' && dropped.id !== item.id) {
-          await moveItemToContainer(app, dropped, item);
+          await moveItemToContainer(app, dropped, item, dropData);
           return;
         }
-        await moveItemToRoot(app, dropped);
+        await moveItemToRoot(app, dropped, dropData);
       } catch (error) {
         console.error(`${MODULE_ID} | Error processing drop:`, error);
       }
@@ -2479,7 +2551,7 @@ async function buildContainerContentsPanel(app, containerItem) {
           const dropData = JSON.parse(event.dataTransfer.getData('text/plain'));
       const dropped = await resolveDroppedItem(app, dropData);
       if (!dropped) return;
-      await moveItemToContainer(app, dropped, containerItem);
+      await moveItemToContainer(app, dropped, containerItem, dropData);
       // После изменения содержимого — восстановить представление контейнера в текущем режиме инвентаря
       const currentHtml = app.element instanceof jQuery ? app.element : $(app.element);
       if (isCellInventoryEnabled()) applyCellInventory(app, currentHtml);
@@ -2547,7 +2619,7 @@ async function resolveDroppedItem(app, dropData) {
   return null;
 }
 
-async function moveItemToContainer(app, droppedItem, containerItem) {
+async function moveItemToContainer(app, droppedItem, containerItem, dropData = null) {
   // Сколько переносить?
   const qty = Number(droppedItem.system?.quantity ?? 1);
   // Проверка категорий
@@ -2566,28 +2638,30 @@ async function moveItemToContainer(app, droppedItem, containerItem) {
   if (!amount || amount < 1) return;
 
   if (droppedItem?.parent === app.actor) {
+    const sourceItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData);
+    const sourceQty = Number(sourceItem.system?.quantity ?? 1);
     // Перенос внутри одного актера: если переносим часть стака — разделяем
-    if (amount < qty) {
+    if (amount < sourceQty) {
       // Попробуем слить со стеком в целевом контейнере
-      const mergeTarget = findMergeTarget(app.actor, droppedItem, containerItem.id);
+      const mergeTarget = findMergeTarget(app.actor, sourceItem, containerItem.id);
       if (mergeTarget) {
         await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
-        await droppedItem.update({ 'system.quantity': qty - amount });
+        await sourceItem.update({ 'system.quantity': sourceQty - amount });
       } else {
-        const newData = foundry.utils.duplicate(droppedItem.toObject());
+        const newData = foundry.utils.duplicate(sourceItem.toObject());
         newData.system.quantity = amount;
         newData.system.container = containerItem.id;
         await app.actor.createEmbeddedDocuments('Item', [newData]);
-        await droppedItem.update({ 'system.quantity': qty - amount });
+        await sourceItem.update({ 'system.quantity': sourceQty - amount });
       }
     } else {
       // Переносим весь стек: если есть цель для слияния — сливаем и удаляем исходный
-      const mergeTarget = findMergeTarget(app.actor, droppedItem, containerItem.id);
+      const mergeTarget = findMergeTarget(app.actor, sourceItem, containerItem.id);
       if (mergeTarget) {
-        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + qty });
-        await droppedItem.delete();
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + sourceQty });
+        await sourceItem.delete();
       } else {
-        await droppedItem.update({ 'system.container': containerItem.id });
+        await sourceItem.update({ 'system.container': containerItem.id });
       }
     }
     return;
@@ -2608,37 +2682,38 @@ async function moveItemToContainer(app, droppedItem, containerItem) {
   }
 }
 
-async function moveItemToRoot(app, droppedItem) {
-  const qty = Number(droppedItem.system?.quantity ?? 1);
+async function moveItemToRoot(app, droppedItem, dropData = null) {
+  const normalizedItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData);
+  const qty = Number(normalizedItem.system?.quantity ?? 1);
   let amount = qty;
-  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: qty });
+  if (qty > 1) amount = await promptForQuantity({ title: normalizedItem.name, max: qty });
   if (!amount || amount < 1) return;
 
-  if (droppedItem?.parent === app.actor) {
-    const mergeTarget = findMergeTarget(app.actor, droppedItem, null);
+  if (normalizedItem?.parent === app.actor) {
+    const mergeTarget = findMergeTarget(app.actor, normalizedItem, null);
     if (amount < qty) {
       if (mergeTarget) {
         await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
-        await droppedItem.update({ 'system.quantity': qty - amount });
+        await normalizedItem.update({ 'system.quantity': qty - amount });
       } else {
-        const newData = foundry.utils.duplicate(droppedItem.toObject());
+        const newData = foundry.utils.duplicate(normalizedItem.toObject());
         newData.system.quantity = amount;
         newData.system.container = null;
         await app.actor.createEmbeddedDocuments('Item', [newData]);
-        await droppedItem.update({ 'system.quantity': qty - amount });
+        await normalizedItem.update({ 'system.quantity': qty - amount });
       }
     } else {
       if (mergeTarget) {
         await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + qty });
-        await droppedItem.delete();
+        await normalizedItem.delete();
       } else {
-        await droppedItem.update({ 'system.container': null });
+        await normalizedItem.update({ 'system.container': null });
       }
     }
     return;
   }
 
-  const data = droppedItem?.toObject ? droppedItem.toObject() : droppedItem;
+  const data = normalizedItem?.toObject ? normalizedItem.toObject() : normalizedItem;
   if (!data) return;
   data.system = data.system ?? {};
   data.system.quantity = amount;
@@ -2842,4 +2917,9 @@ async function computeMaxFittableQuantity(containerItem, itemLike) {
   }
 }
 
-export { applyCellInventory, applyItemTooltips };
+export {
+  applyCellInventory,
+  applyItemTooltips,
+  beginOwnedItemSheetDrag,
+  finishOwnedItemSheetDrag
+};

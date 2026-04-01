@@ -1,4 +1,9 @@
-import { applyCellInventory, applyItemTooltips } from "./custom-item-sections.js";
+import {
+  applyCellInventory,
+  applyItemTooltips,
+  beginOwnedItemSheetDrag,
+  finishOwnedItemSheetDrag
+} from "./custom-item-sections.js";
 import {
   ArmorHandler as ImportedArmorHandler,
   PaperDollArmor as ImportedPaperDollArmor
@@ -263,11 +268,32 @@ async function resolveDroppedActorItem(sheet, dropData) {
   }
 }
 
+function resolveLocalActorDropItem(sheet, dropData) {
+  if (!dropData || dropData.type !== "Item") return null;
+
+  if (dropData.actorId === sheet.actor.id && dropData.id) {
+    return sheet.actor.items.get(dropData.id) ?? null;
+  }
+
+  if (!dropData.uuid) return null;
+  return sheet.actor.items.find((item) => item.uuid === dropData.uuid) ?? null;
+}
+
 function getDraggedWeaponSetItem(sheet, setKey) {
   const sets = sheet.actor.getFlag("enhancedcombathud", "weaponSets") || {};
   const uuid = sets?.[String(setKey)]?.primary || null;
   if (!uuid) return null;
   return sheet.actor.items.find((item) => item.uuid === uuid) ?? null;
+}
+
+function getWeaponSlotHandAreaResolved(setKey) {
+  const key = String(setKey ?? "");
+  return key === "2" || key === "4" ? "Левая рука" : "Правая рука";
+}
+
+function getWeaponSlotHandArea(setKey) {
+  const key = String(setKey ?? "");
+  return (key === "2" || key === "4") ? "Р›РµРІР°СЏ СЂСѓРєР°" : "РџСЂР°РІР°СЏ СЂСѓРєР°";
 }
 
 function getDraggedGearSlotItem(sheet, slotElement) {
@@ -304,6 +330,13 @@ function clearCompatibleSlotHighlights(root) {
   if (!root) return;
   root.querySelectorAll(".cis-slot-compatible").forEach((element) => {
     element.classList.remove("cis-slot-compatible");
+  });
+}
+
+function clearDragOverHighlights(root) {
+  if (!root) return;
+  root.querySelectorAll(".cis-gear-slot.drag-over, .cis-weapon-slot.drag-over").forEach((element) => {
+    element.classList.remove("drag-over");
   });
 }
 
@@ -362,6 +395,10 @@ function createPaperDollAdapter(sheet) {
   adapter.filterItems = (...args) => proto.filterItems.call(adapter, ...args);
   adapter.setCenterContainerItems = (...args) => proto.setCenterContainerItems.call(adapter, ...args);
   adapter._showCustomItemSelectionDialog = (...args) => proto._showCustomItemSelectionDialog.call(adapter, ...args);
+  adapter._onClick = (...args) => proto._onClick.call(adapter, ...args);
+  adapter._onContextMenu = (...args) => proto._onContextMenu.call(adapter, ...args);
+  adapter._onDragStart = (...args) => proto._onDragStart.call(adapter, ...args);
+  adapter._onDrop = (...args) => proto._onDrop.call(adapter, ...args);
   adapter._equipWeapon = (...args) => proto._equipWeapon.call(adapter, ...args);
   adapter.equipItemWithCoverage = (...args) => proto.equipItemWithCoverage.call(adapter, ...args);
   adapter._echDefaultSets = (...args) => proto._echDefaultSets.call(adapter, ...args);
@@ -379,6 +416,55 @@ function createPaperDollAdapter(sheet) {
   adapter._onEchDrop = (...args) => proto._onEchDrop.call(adapter, ...args);
 
   return adapter;
+}
+
+function ensureSheetDragGhost(root) {
+  if (!(root instanceof HTMLElement)) return null;
+  let ghost = root.querySelector(".cis-sheet-drag-ghost");
+  if (ghost) return ghost;
+
+  ghost = document.createElement("div");
+  ghost.className = "cis-sheet-drag-ghost";
+  ghost.setAttribute("aria-hidden", "true");
+  ghost.innerHTML = `
+    <div class="cis-sheet-drag-ghost-card">
+      <img class="cis-sheet-drag-ghost-image" alt="" />
+      <span class="cis-sheet-drag-ghost-qty"></span>
+    </div>
+  `;
+  root.appendChild(ghost);
+  return ghost;
+}
+
+function updateSheetDragGhost(root, item, event) {
+  const ghost = ensureSheetDragGhost(root);
+  if (!ghost || !item) return;
+
+  const image = ghost.querySelector(".cis-sheet-drag-ghost-image");
+  const qty = ghost.querySelector(".cis-sheet-drag-ghost-qty");
+  const quantity = Number(item.system?.quantity ?? 1);
+
+  ghost.style.left = `${Number(event?.clientX ?? 0)}px`;
+  ghost.style.top = `${Number(event?.clientY ?? 0)}px`;
+  ghost.style.setProperty("--cis-drag-accent", getItemColor(item) || "");
+  ghost.classList.add("active");
+
+  if (image) {
+    image.src = item.img || "";
+    image.alt = item.name || "";
+  }
+
+  if (qty) {
+    qty.textContent = quantity > 1 ? String(quantity) : "";
+    qty.hidden = quantity <= 1;
+  }
+}
+
+function clearSheetDragGhost(root) {
+  if (!(root instanceof HTMLElement)) return;
+  const ghost = root.querySelector(".cis-sheet-drag-ghost");
+  if (!ghost) return;
+  ghost.classList.remove("active");
 }
 
 function localizeLabel(label) {
@@ -514,23 +600,51 @@ Hooks.once("init", () => {
       const root = html?.[0] ?? html;
       if (!root) return;
 
+      let activeDragItem = null;
+      let activeDragSource = null;
+
       const beginHighlight = (event) => {
         const item = resolveDraggedSheetItem(this, event);
         if (!item) {
+          activeDragItem = null;
+          activeDragSource?.classList?.remove?.("dragging");
+          activeDragSource = null;
           clearCompatibleSlotHighlights(root);
+          clearDragOverHighlights(root);
+          clearSheetDragGhost(root);
           return;
         }
+
+        activeDragItem = item;
+        activeDragSource?.classList?.remove?.("dragging");
+        activeDragSource = event.target instanceof HTMLElement
+          ? event.target.closest(".cis-gear-slot, .cis-weapon-slot")
+          : null;
+        activeDragSource?.classList?.add?.("dragging");
+
+        updateSheetDragGhost(root, item, event);
 
         globalThis.requestAnimationFrame(() => {
           applyCompatibleSlotHighlights(root, this, item);
         });
       };
 
+      const moveHighlight = (event) => {
+        if (!activeDragItem) return;
+        updateSheetDragGhost(root, activeDragItem, event);
+      };
+
       const endHighlight = () => {
+        activeDragItem = null;
+        activeDragSource?.classList?.remove?.("dragging");
+        activeDragSource = null;
         clearCompatibleSlotHighlights(root);
+        clearDragOverHighlights(root);
+        clearSheetDragGhost(root);
       };
 
       root.addEventListener("dragstart", beginHighlight, true);
+      root.addEventListener("dragover", moveHighlight, true);
       root.addEventListener("dragend", endHighlight, true);
       root.addEventListener("drop", endHighlight, true);
     }
@@ -546,17 +660,40 @@ Hooks.once("init", () => {
       root.querySelectorAll(".cis-gear-slot").forEach((slotElement) => {
         slotElement.addEventListener("click", (event) => {
           adapter.render = () => this.render(false);
-          proto._onClick.call(adapter, event);
+          adapter._onClick(event);
         });
 
         slotElement.addEventListener("contextmenu", async (event) => {
           adapter.render = () => this.render(false);
-          await proto._onContextMenu.call(adapter, event);
+          await adapter._onContextMenu(event);
+        });
+
+        slotElement.addEventListener("dragstart", (event) => {
+          const item = getDraggedGearSlotItem(this, slotElement);
+          if (!item) {
+            event.preventDefault();
+            return;
+          }
+
+          beginOwnedItemSheetDrag(this.actor, item, event, {
+            fromSlot: {
+              slotId: slotElement.dataset.id,
+              slotIndex: Number(slotElement.dataset.index ?? 0)
+            }
+          });
+          slotElement.classList.add("dragging");
+        });
+
+        slotElement.addEventListener("dragend", () => {
+          finishOwnedItemSheetDrag();
+          slotElement.classList.remove("drag-over", "dragging");
         });
 
         slotElement.addEventListener("dragover", (event) => {
           const dropData = getDropData(event);
-          if (!dropData || dropData.type !== "Item") return;
+          const item = resolveLocalActorDropItem(this, dropData);
+          if (!item) return;
+          if (!adapter.filterItems([item], slotElement.dataset.id, Number(slotElement.dataset.index ?? 0))?.length) return;
           event.preventDefault();
           slotElement.classList.add("drag-over");
         });
@@ -571,15 +708,12 @@ Hooks.once("init", () => {
           const dropData = getDropData(event);
           const item = await resolveDroppedActorItem(this, dropData);
           if (!item) return;
+          if (!adapter.filterItems([item], slotElement.dataset.id, Number(slotElement.dataset.index ?? 0))?.length) return;
 
           event.preventDefault();
           event.stopPropagation();
           adapter.render = () => this.render(false);
-          await adapter.equipItemWithCoverage(item, {
-            targetCoverageArea: slotElement.dataset.id,
-            targetSlotIndex: Number(slotElement.dataset.index ?? 0)
-          });
-          this.render(false);
+          await adapter._onDrop(event);
         });
       });
     }
@@ -611,13 +745,28 @@ Hooks.once("init", () => {
         });
 
         slotElement.addEventListener("dragstart", (event) => {
-          adapter.render = () => this.render(false);
-          proto._onEchDragStart.call(adapter, event);
+          const item = getDraggedWeaponSetItem(this, slotElement.dataset.echSet);
+          if (!item) {
+            event.preventDefault();
+            return;
+          }
+
+          beginOwnedItemSheetDrag(this.actor, item, event, {
+            fromEchSet: String(slotElement.dataset.echSet)
+          });
+          slotElement.classList.add("dragging");
+        });
+
+        slotElement.addEventListener("dragend", () => {
+          finishOwnedItemSheetDrag();
+          slotElement.classList.remove("drag-over", "dragging");
         });
 
         slotElement.addEventListener("dragover", (event) => {
           const dropData = getDropData(event);
-          if (!dropData || dropData.type !== "Item") return;
+          const item = resolveLocalActorDropItem(this, dropData);
+          if (!item) return;
+          if (!adapter.filterItems([item], getWeaponSlotHandAreaResolved(slotElement.dataset.echSet), 0)?.length) return;
           event.preventDefault();
           slotElement.classList.add("drag-over");
         });
@@ -628,6 +777,10 @@ Hooks.once("init", () => {
 
         slotElement.addEventListener("drop", async (event) => {
           slotElement.classList.remove("drag-over");
+          const dropData = getDropData(event);
+          const item = await resolveDroppedActorItem(this, dropData);
+          if (!item) return;
+          if (!adapter.filterItems([item], getWeaponSlotHandAreaResolved(slotElement.dataset.echSet), 0)?.length) return;
           adapter.render = () => this.render(false);
           await proto._onEchDrop.call(adapter, event);
         });

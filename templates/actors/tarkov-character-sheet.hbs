@@ -50,12 +50,13 @@
                           data-slot-area="{{slot.coverageArea}}"
                           data-slot-index="{{slot.slotIndex}}"
                           {{#unless slot.empty}}data-item-id="{{slot.itemId}}"{{/unless}}
+                          {{#unless slot.empty}}draggable="true"{{/unless}}
                         >
                           {{#if slot.empty}}
                             <span class="cis-gear-slot-empty">Пусто</span>
                           {{else}}
-                            <div class="cis-gear-slot-item" {{#if slot.itemColor}}style="--cis-slot-accent: {{slot.itemColor}};"{{/if}}>
-                              <img src="{{slot.itemImage}}" alt="{{slot.itemName}}" />
+                            <div class="cis-gear-slot-item" draggable="false" {{#if slot.itemColor}}style="--cis-slot-accent: {{slot.itemColor}};"{{/if}}>
+                              <img src="{{slot.itemImage}}" alt="{{slot.itemName}}" draggable="false" />
                               {{#if slot.itemQuantity}}
                                 <span class="cis-gear-slot-qty">{{slot.itemQuantity}}</span>
                               {{/if}}
@@ -94,8 +95,8 @@
                             {{#if slot.empty}}
                               <span class="cis-gear-slot-empty">Пусто</span>
                             {{else}}
-                              <div class="cis-weapon-slot-item" {{#if slot.itemColor}}style="--cis-slot-accent: {{slot.itemColor}};"{{/if}}>
-                                <img src="{{slot.itemImage}}" alt="{{slot.itemName}}" />
+                              <div class="cis-weapon-slot-item" draggable="false" {{#if slot.itemColor}}style="--cis-slot-accent: {{slot.itemColor}};"{{/if}}>
+                                <img src="{{slot.itemImage}}" alt="{{slot.itemName}}" draggable="false" />
                                 {{#if slot.itemQuantity}}
                                   <span class="cis-gear-slot-qty">{{slot.itemQuantity}}</span>
                                 {{/if}}

@@ -400,6 +400,11 @@
   box-shadow: 0 0 0 1px rgba(201, 106, 57, 0.28), 0 0 14px rgba(201, 106, 57, 0.25);
 }
 
+.cis-gear-slot.dragging {
+  opacity: 0.32;
+  transform: scale(0.98);
+}
+
 .cis-gear-slot.cis-slot-compatible {
   border-color: rgba(228, 205, 144, 0.52);
   background:
@@ -553,6 +558,11 @@
   box-shadow: 0 0 0 1px rgba(201, 106, 57, 0.28), 0 0 14px rgba(201, 106, 57, 0.25);
 }
 
+.cis-weapon-slot.dragging {
+  opacity: 0.32;
+  transform: scale(0.98);
+}
+
 .cis-weapon-slot.cis-slot-compatible {
   border-color: rgba(228, 205, 144, 0.52);
   background:
@@ -607,6 +617,61 @@
   display: grid;
   align-content: start;
   padding: 1.25rem;
+}
+
+.cis-sheet-drag-ghost {
+  --cis-drag-accent: var(--cis-accent);
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 120;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(18px, 18px) scale(0.94);
+  transition: opacity 100ms ease, transform 100ms ease;
+}
+
+.cis-sheet-drag-ghost.active {
+  opacity: 1;
+  transform: translate(18px, 18px) scale(1);
+}
+
+.cis-sheet-drag-ghost-card {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 86px;
+  height: 86px;
+  padding: 0.3rem;
+  border: 1px solid color-mix(in srgb, var(--cis-drag-accent) 60%, rgba(232, 212, 136, 0.55));
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, rgba(24, 27, 35, 0.94), rgba(8, 10, 15, 0.98)),
+    linear-gradient(135deg, color-mix(in srgb, var(--cis-drag-accent) 14%, transparent), transparent);
+  box-shadow:
+    0 14px 30px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(232, 212, 136, 0.12),
+    inset 0 0 22px color-mix(in srgb, var(--cis-drag-accent) 16%, transparent);
+}
+
+.cis-sheet-drag-ghost-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border: 0;
+}
+
+.cis-sheet-drag-ghost-qty {
+  position: absolute;
+  right: 0.28rem;
+  bottom: 0.28rem;
+  min-width: 1.35rem;
+  padding: 0 0.26rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.76);
+  color: #fff2b6;
+  font-size: 0.7rem;
+  text-align: center;
 }
 
 .cis-inventory-pane {
