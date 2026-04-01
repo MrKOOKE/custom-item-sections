@@ -2820,3 +2820,5 @@ async function computeMaxFittableQuantity(containerItem, itemLike) {
     return Number(itemLike.system?.quantity ?? 1);
   }
 }
+
+export { applyCellInventory };

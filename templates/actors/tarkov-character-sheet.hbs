@@ -1,0 +1,115 @@
+<form class="cis-tarkov-shell {{cssClass}}" autocomplete="off">
+  <div class="cis-sheet-toolbar">
+    <div class="cis-sheet-toolbar-title">{{actor.name}}</div>
+
+    <div class="cis-sheet-toolbar-buttons">
+      {{#each headerButtons as |button|}}
+        <button
+          class="cis-sheet-toolbar-button {{button.cssClass}}"
+          type="button"
+          data-action="header-button"
+          data-header-button-id="{{button.id}}"
+          title="{{button.label}}"
+          aria-label="{{button.label}}"
+        >
+          {{#if button.icon}}
+            <i class="{{button.icon}}"></i>
+          {{else}}
+            <span>{{button.label}}</span>
+          {{/if}}
+        </button>
+      {{/each}}
+    </div>
+  </div>
+
+  <header class="cis-tarkov-header">
+    <div class="cis-tarkov-portrait-frame">
+      <img class="profile-img" src="{{actor.img}}" alt="{{actor.name}}" data-edit="img" title="{{actor.name}}" />
+    </div>
+
+    <div class="cis-tarkov-heading">
+      <label class="cis-tarkov-nameplate">
+        <span class="cis-tarkov-label">Позывной</span>
+        <input class="cis-tarkov-name" name="name" type="text" value="{{actor.name}}" />
+      </label>
+
+      <div class="cis-tarkov-summary">{{summary}}</div>
+
+      <div class="cis-tarkov-metrics">
+        {{#each metrics as |metric|}}
+          <article class="cis-tarkov-metric cis-tarkov-metric--{{metric.accent}}">
+            <span class="cis-tarkov-metric-label">{{metric.label}}</span>
+            <strong class="cis-tarkov-metric-value">{{metric.value}}</strong>
+            {{#if metric.badge}}
+              <span class="cis-tarkov-metric-badge">{{metric.badge}}</span>
+            {{/if}}
+          </article>
+        {{/each}}
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs cis-sheet-tabs" aria-label="Вкладки персонажа">
+    {{#each tabs as |tab|}}
+      <a class="item {{#if tab.active}}active{{/if}}" data-tab="{{tab.id}}">
+        <span>{{tab.label}}</span>
+      </a>
+    {{/each}}
+  </nav>
+
+  <section class="cis-sheet-body">
+    {{#each tabs as |tab|}}
+      <section class="tab {{#if tab.isEquipment}}inventory equipment{{else}}cis-tarkov-placeholder-tab{{/if}} {{#if tab.active}}active{{/if}}" data-tab="{{tab.id}}">
+        {{#if tab.isEquipment}}
+          <div class="cis-equipment-layout">
+            <div class="cis-loadout-pane">
+              <div class="cis-gear-board">
+                {{#each ../gearSlots as |gearSlot|}}
+                  <article class="cis-gear-card {{#if gearSlot.isLarge}}is-large{{/if}} {{#if gearSlot.isHand}}is-hand{{/if}}">
+                    <header class="cis-gear-card-title">{{gearSlot.label}}</header>
+
+                    <div class="cis-gear-card-body {{#if gearSlot.multiSlot}}is-multi{{/if}}">
+                      {{#each gearSlot.slots as |slot|}}
+                        <div
+                          class="cis-gear-slot {{#if slot.empty}}is-empty{{/if}}"
+                          data-id="{{slot.coverageArea}}"
+                          data-index="{{slot.slotIndex}}"
+                          data-slot-area="{{slot.coverageArea}}"
+                          data-slot-index="{{slot.slotIndex}}"
+                        >
+                          {{#if slot.empty}}
+                            <span class="cis-gear-slot-empty">Пусто</span>
+                          {{else}}
+                            <div class="cis-gear-slot-item" {{#if slot.itemColor}}style="--cis-slot-accent: {{slot.itemColor}};"{{/if}}>
+                              <img src="{{slot.itemImage}}" alt="{{slot.itemName}}" />
+                              <span class="cis-gear-slot-name">{{slot.itemName}}</span>
+                              {{#if slot.itemQuantity}}
+                                <span class="cis-gear-slot-qty">{{slot.itemQuantity}}</span>
+                              {{/if}}
+                            </div>
+                          {{/if}}
+                        </div>
+                      {{/each}}
+                    </div>
+                  </article>
+                {{/each}}
+              </div>
+            </div>
+
+            <div class="cis-inventory-pane">
+              <header class="cis-panel-header">
+                <h2>Инвентарь</h2>
+              </header>
+
+              <div class="items-list inventory-list"></div>
+            </div>
+          </div>
+        {{else}}
+          <div class="cis-placeholder-panel">
+            <h2>{{tab.label}}</h2>
+          </div>
+        {{/if}}
+      </section>
+    {{/each}}
+  </section>
+</form>

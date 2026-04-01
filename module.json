@@ -11,8 +11,14 @@
   "authors": [{
     "name": "MrKOOKE"
   }],
-  "esmodules": ["scripts/custom-item-sections.js"],
-  "styles": ["styles/custom-item-sections.css"],
+  "esmodules": [
+    "scripts/custom-item-sections.js",
+    "scripts/tarkov-character-sheet.js"
+  ],
+  "styles": [
+    "styles/custom-item-sections.css",
+    "styles/tarkov-character-sheet.css"
+  ],
   "languages": [
     {
       "lang": "en",
