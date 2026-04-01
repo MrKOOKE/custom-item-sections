@@ -41,6 +41,11 @@
     "CategoryFilterHint": "Category is taken from the item's 'Section' field. In 'Only listed' mode the container accepts only items with listed categories; in 'All except listed' — any except listed.",
     "CategoryName": "Category name",
     "CategoryReject": "This item is not allowed by the container's category rules.",
-    "CapacityExceeded": "Not enough remaining capacity in the container."
+    "CapacityExceeded": "Not enough remaining capacity in the container.",
+    "ContainerVolume": "Container Volume",
+    "ContainerVolumeHint": "How many cells are available inside the container horizontally and vertically. Equipped containers show this grid under the main inventory in the new sheet.",
+    "ContainerVolumeShort": "Volume",
+    "ContainerSlots": "Slots",
+    "SlotCapacityExceeded": "There is not enough free slot space in the container."
   }
 }

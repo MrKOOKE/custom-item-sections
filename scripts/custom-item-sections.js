@@ -21,7 +21,9 @@ const FLAGS = {
   GRID_POSITION: 'inventoryGridPosition',
   GRID_SORT_MODE: 'cellInventorySortMode',
   GRID_SIZE_X: 'inventoryGridSizeX',
-  GRID_SIZE_Y: 'inventoryGridSizeY'
+  GRID_SIZE_Y: 'inventoryGridSizeY',
+  CONTAINER_GRID_X: 'containerGridSizeX',
+  CONTAINER_GRID_Y: 'containerGridSizeY'
 };
 
 // Управление логированием: по умолчанию тихо; включается настройкой 'debugLogs'
@@ -85,6 +87,10 @@ function isPaperDollInventoryHidden(itemLike) {
   return foundry.utils.getProperty(itemLike, `flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`) === true;
 }
 
+function shouldHideItemFromCellInventory(itemLike) {
+  return isPaperDollInventoryHidden(itemLike) || Boolean(itemLike?.system?.equipped);
+}
+
 function hideActiveTooltip() {
   try {
     requestAnimationFrame(() => game.tooltip?.deactivate?.());
@@ -97,6 +103,7 @@ const savedItemSheetScroll = new Map();
 const cellInventoryPositionCacheByActor = new Map();
 let activeCellInventoryDrag = null;
 let transparentDragImage = null;
+const pendingAutoUnequipPlacementTimers = new Map();
 
 function getExpandedContainersForActor(actorId) {
   if (!expandedContainersByActor.has(actorId)) expandedContainersByActor.set(actorId, new Set());
@@ -163,7 +170,7 @@ function isPaperDollSourceDropData(dropData) {
   return Boolean(dropData?.fromSlot || dropData?.fromEchSet);
 }
 
-async function normalizePaperDollDraggedItem(app, droppedItem, dropData = null) {
+async function normalizePaperDollDraggedItem(app, droppedItem, dropData = null, updateOptions = {}) {
   if (!app?.actor || !droppedItem || droppedItem.parent !== app.actor) return droppedItem;
   if (!isPaperDollSourceDropData(dropData) && !isPaperDollInventoryHidden(droppedItem)) return droppedItem;
 
@@ -171,7 +178,7 @@ async function normalizePaperDollDraggedItem(app, droppedItem, dropData = null) 
   if (droppedItem.system?.equipped) updateData['system.equipped'] = false;
   updateData[`flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`] = false;
 
-  await droppedItem.update(updateData);
+  await droppedItem.update(updateData, updateOptions);
   return app.actor.items.get(droppedItem.id) ?? droppedItem;
 }
 
@@ -203,7 +210,9 @@ async function movePaperDollDraggedItemToCell(app, droppedItem, position, dropDa
     updateData[`flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`] = false;
   }
 
-  await app.actor.updateEmbeddedDocuments("Item", [updateData]);
+  await app.actor.updateEmbeddedDocuments("Item", [updateData], {
+    cisSkipAutoUnequipPlacement: true
+  });
   return true;
 }
 
@@ -218,6 +227,78 @@ function getCellInventoryPositionCache(actorId) {
 function clearCellInventoryPositionCache(actorId) {
   if (!actorId) return;
   cellInventoryPositionCacheByActor.delete(actorId);
+}
+
+function getAutoUnequipPlacementKey(actorId, itemId) {
+  if (!actorId || !itemId) return null;
+  return `${actorId}:${itemId}`;
+}
+
+function scheduleAutoUnequippedItemPlacement(item) {
+  const actor = item?.parent;
+  const key = getAutoUnequipPlacementKey(actor?.id, item?.id);
+  if (!key || !actor?.isOwner) return;
+
+  const existingTimer = pendingAutoUnequipPlacementTimers.get(key);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const timer = setTimeout(async () => {
+    pendingAutoUnequipPlacementTimers.delete(key);
+    try {
+      await autoPlaceUnequippedItemInRoot(actor, item.id);
+    } catch (error) {
+      console.error(`${MODULE_ID} | autoPlaceUnequippedItemInRoot failed`, error);
+    }
+  }, 0);
+
+  pendingAutoUnequipPlacementTimers.set(key, timer);
+}
+
+async function autoPlaceUnequippedItemInRoot(actor, itemId) {
+  if (!actor?.isOwner || !itemId || !isCellInventoryEnabled()) return;
+
+  const item = actor.items.get(itemId);
+  if (!item || item.system?.equipped) return;
+
+  const updateData = { _id: item.id };
+  let hasChanges = false;
+
+  if (item.system?.container) {
+    const mergeTarget = findMergeTarget(actor, item, null);
+    if (mergeTarget) {
+      await mergeTarget.update({
+        'system.quantity': Number(mergeTarget.system?.quantity ?? 0) + Number(item.system?.quantity ?? 1)
+      }, {
+        cisSkipAutoUnequipPlacement: true
+      });
+      await item.delete();
+      return;
+    }
+
+    const layoutState = collectCellInventoryLayoutState(actor);
+    const position = findNextFreeCellInventoryPosition(
+      layoutState.occupiedCells,
+      getCellInventorySize(item),
+      layoutState.gridDimensions
+    );
+
+    if (position) {
+      updateData['system.container'] = null;
+      updateData[`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`] = position;
+      hasChanges = true;
+    }
+  }
+
+  if (isPaperDollInventoryHidden(item)) {
+    updateData[`flags.${PAPER_DOLL_MODULE_ID}.${PAPER_DOLL_HIDE_INVENTORY_FLAG}`] = false;
+    hasChanges = true;
+  }
+
+  if (!hasChanges) return;
+
+  await actor.updateEmbeddedDocuments('Item', [updateData], {
+    cisSkipAutoUnequipPlacement: true
+  });
 }
 
 // Инициализация модуля
@@ -248,6 +329,16 @@ Hooks.once('setup', () => {
   } catch (e) {
     console.warn(`${MODULE_ID} | setup patch failed`, e);
   }
+});
+
+Hooks.on('updateItem', (item, changed, options = {}) => {
+  const actor = item?.parent;
+  if (!actor?.isOwner) return;
+  if (options?.cisSkipAutoUnequipPlacement || options?.paperDollInventorySync) return;
+  if (foundry.utils.getProperty(changed, 'system.equipped') !== false) return;
+  if (!item.system?.container && !isPaperDollInventoryHidden(item)) return;
+
+  scheduleAutoUnequippedItemPlacement(item);
 });
 
 // Функция настройки обработчиков контроля инвентаря
@@ -332,6 +423,200 @@ function registerSettings() {
   });
 }
 
+const SCROLL_STABILIZER_EXTRA_SELECTORS = Object.freeze([
+  '.window-content',
+  '.items-list',
+  '.inventory-list',
+  '.effects-list',
+  'dnd5e-inventory .inventory-list',
+  'dnd5e-effects .effects-list',
+  '.form-body',
+  '.center-pane',
+  '.sheet-body',
+  '.tab.active',
+  '.cis-loadout-pane',
+  '.cis-inventory-pane',
+  '.cis-cell-inventory-scroll',
+  '.cis-cell-inventory-panel-scroll'
+]);
+
+const SCROLL_STABILIZER_DATA_KEYS = Object.freeze([
+  'tab',
+  'scopeType',
+  'containerId',
+  'itemId',
+  'action',
+  'echSet',
+  'id',
+  'index'
+]);
+
+const SCROLL_STABILIZER_CLASS_NAMES = new Set([
+  'window-content',
+  'sheet-body',
+  'items-list',
+  'inventory-list',
+  'effects-list',
+  'tab',
+  'active',
+  'cis-loadout-pane',
+  'cis-inventory-pane',
+  'cis-cell-inventory-scroll',
+  'cis-cell-inventory-panel-scroll',
+  'cis-cell-inventory-shell',
+  'cis-cell-inventory-content',
+  'cis-cell-inventory-panels',
+  'cis-cell-inventory-root-scope'
+]);
+
+function getScrollStabilizerSelectors(app) {
+  const configured = Array.isArray(app?.options?.scrollY) ? app.options.scrollY : [];
+  return Array.from(new Set([...configured, ...SCROLL_STABILIZER_EXTRA_SELECTORS]));
+}
+
+function matchesScrollStabilizerSelector(element, selectors = []) {
+  if (!element?.matches || !selectors.length) return false;
+  for (const selector of selectors) {
+    try {
+      if (element.matches(selector)) return true;
+    } catch (_) { /* ignore invalid selector */ }
+  }
+  return false;
+}
+
+function buildScrollStabilizerPath(element, root) {
+  if (!element || !root) return null;
+  if (element === root) return [];
+
+  const path = [];
+  let current = element;
+  while (current && current !== root) {
+    const parent = current.parentElement;
+    if (!parent) return null;
+    const index = Array.prototype.indexOf.call(parent.children, current);
+    if (index < 0) return null;
+    path.unshift(index);
+    current = parent;
+  }
+
+  return current === root ? path : null;
+}
+
+function resolveScrollStabilizerPath(root, path = []) {
+  if (!root) return null;
+  let current = root;
+  for (const index of path) {
+    if (!current?.children || index < 0 || index >= current.children.length) return null;
+    current = current.children[index];
+  }
+  return current;
+}
+
+function captureScrollStabilizerSignature(element) {
+  const dataset = {};
+  for (const key of SCROLL_STABILIZER_DATA_KEYS) {
+    const value = element?.dataset?.[key];
+    if (typeof value === 'string' && value !== '') dataset[key] = value;
+  }
+
+  const classes = Array.from(element?.classList ?? [])
+    .filter((className) => className.startsWith('cis-') || SCROLL_STABILIZER_CLASS_NAMES.has(className))
+    .sort()
+    .slice(0, 8);
+
+  return {
+    tagName: element?.tagName ?? null,
+    id: element?.id || null,
+    classes,
+    dataset
+  };
+}
+
+function doesScrollStabilizerSignatureMatch(element, signature = {}) {
+  if (!element || !signature?.tagName) return false;
+  if (element.tagName !== signature.tagName) return false;
+  if (signature.id && element.id !== signature.id) return false;
+
+  for (const className of signature.classes ?? []) {
+    if (!element.classList?.contains(className)) return false;
+  }
+
+  for (const [key, value] of Object.entries(signature.dataset ?? {})) {
+    if (element.dataset?.[key] !== value) return false;
+  }
+
+  return true;
+}
+
+function findScrollStabilizerElementBySignature(root, signature = {}) {
+  if (!root || !signature?.tagName) return null;
+  const hasStableMarker = Boolean(
+    signature.id
+    || (signature.classes?.length)
+    || Object.keys(signature.dataset ?? {}).length
+  );
+  if (!hasStableMarker) return null;
+  const candidates = root.querySelectorAll(signature.tagName);
+  for (const candidate of candidates) {
+    if (doesScrollStabilizerSignatureMatch(candidate, signature)) return candidate;
+  }
+  return null;
+}
+
+function resolveScrollStabilizerElement(root, state) {
+  if (!root || !state) return null;
+
+  const fromPath = resolveScrollStabilizerPath(root, state.path);
+  if (doesScrollStabilizerSignatureMatch(fromPath, state.signature)) return fromPath;
+
+  return findScrollStabilizerElementBySignature(root, state.signature);
+}
+
+function collectScrollStabilizerState(root, selectors = []) {
+  if (!root?.querySelectorAll) return [];
+
+  const states = [];
+  const elements = [root, ...root.querySelectorAll('*')];
+
+  for (const element of elements) {
+    if (!(element instanceof HTMLElement)) continue;
+
+    const top = Math.round(Number(element.scrollTop) || 0);
+    const left = Math.round(Number(element.scrollLeft) || 0);
+    if (!top && !left) continue;
+
+    const isTracked = matchesScrollStabilizerSelector(element, selectors);
+    const canScrollVertically = (element.scrollHeight - element.clientHeight) > 1;
+    const canScrollHorizontally = (element.scrollWidth - element.clientWidth) > 1;
+    if (!isTracked && !canScrollVertically && !canScrollHorizontally) continue;
+
+    const path = buildScrollStabilizerPath(element, root);
+    if (!path) continue;
+
+    states.push({
+      path,
+      signature: captureScrollStabilizerSignature(element),
+      top,
+      left
+    });
+  }
+
+  states.sort((left, right) => left.path.length - right.path.length);
+  return states;
+}
+
+function restoreScrollStabilizerState(root, states = []) {
+  if (!root || !states.length) return;
+
+  for (const state of states) {
+    const element = resolveScrollStabilizerElement(root, state);
+    if (!element) continue;
+
+    if (typeof state.top === 'number') element.scrollTop = state.top;
+    if (typeof state.left === 'number') element.scrollLeft = state.left;
+  }
+}
+
 // Устанавливает стабилизацию прокрутки листов актёров, оборачивая их _render
 function installScrollStabilizer() {
   // Только для системы dnd5e
@@ -341,57 +626,36 @@ function installScrollStabilizer() {
   const wrapImpl = function(inner) {
     return async function(force, options) {
       try {
-        // Сохраняем текущие позиции прокрутки
         const rootBefore = this?.element?.[0] ?? null;
-        const configured = Array.isArray(this?.options?.scrollY) ? this.options.scrollY : [];
-        const extraSelectors = [
-          // На случай старых/новых листов и разных разметок
-          '.window-content',
-          '.items-list',
-          '.inventory-list',
-          '.effects-list',
-          'dnd5e-inventory .inventory-list',
-          'dnd5e-effects .effects-list',
-          '.form-body',
-          '.center-pane',
-          '.sheet-body'
-        ];
-        const selectors = Array.from(new Set([...configured, ...extraSelectors]));
-        const saved = new Map();
+        const selectors = getScrollStabilizerSelectors(this);
+        const saved = collectScrollStabilizerState(rootBefore, selectors);
         const prevSize = { width: this?.position?.width, height: this?.position?.height };
-        if (rootBefore && selectors.length) {
-          for (const selector of selectors) {
-            const scroller = rootBefore.querySelector(selector);
-            if (scroller && typeof scroller.scrollTop === 'number') {
-              saved.set(selector, scroller.scrollTop);
-            }
-          }
-        }
 
-        // Рендер по-обычному
         const result = await inner.call(this, force, options);
 
-        // Восстанавливаем прокрутку на новом DOM
         const rootAfter = this?.element?.[0] ?? null;
-        if (rootAfter && saved.size) {
-      const applyScroll = () => {
-            for (const [selector, top] of saved) {
-              const scroller = rootAfter.querySelector(selector);
-              if (scroller && typeof top === 'number') scroller.scrollTop = top;
-            }
+        if (rootAfter && saved.length) {
+          const applyScroll = () => {
+            try {
+              restoreScrollStabilizerState(rootAfter, saved);
+            } catch (_) { /* ignore */ }
           };
-          // Сейчас, на следующий кадр и микротаск — чтобы перекрыть поздние сдвиги верстки
+
           applyScroll();
+          globalThis.queueMicrotask?.(applyScroll);
           if (typeof requestAnimationFrame === 'function') requestAnimationFrame(applyScroll);
           setTimeout(applyScroll, 0);
-      // И ещё раз после микрозадержки, на случай асинхронных вставок
-      setTimeout(applyScroll, 50);
+          setTimeout(applyScroll, 50);
+          setTimeout(applyScroll, 150);
         }
 
-        // Восстанавливаем размер окна (предотвращает «сжатие» при ререндере форм)
         try {
+          const w = Number(prevSize.width);
           const h = Number(prevSize.height);
-          if (Number.isFinite(h) && h > 0) this.setPosition({ height: h });
+          const positionUpdate = {};
+          if (Number.isFinite(w) && w > 0) positionUpdate.width = w;
+          if (Number.isFinite(h) && h > 0) positionUpdate.height = h;
+          if (Object.keys(positionUpdate).length) this.setPosition(positionUpdate);
         } catch (_) { /* ignore */ }
 
         return result;
@@ -549,6 +813,43 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
       const detailsTab = html.find('.tab.details');
       const containerOptionsRoot = detailsTab.length ? detailsTab : html.find('.sheet-body');
       const current = Number(app.object.getFlag(MODULE_ID, FLAGS.WEIGHT_REDUCTION) ?? 0) || 0;
+      const containerVolume = getContainerGridSize(app.object);
+
+      const volumeFieldHtml = `
+        <div class="form-group cis-container-volume">
+          <label>${game.i18n.localize('CUSTOM_SECTIONS.ContainerVolume')}</label>
+          <div class="form-fields" style="gap: 0.5rem; align-items: center;">
+            <label style="display:flex; align-items:center; gap:0.35rem; margin:0;">
+              <span>${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.SizeX')}</span>
+              <input
+                type="number"
+                class="cis-container-volume-input"
+                name="flags.${MODULE_ID}.${FLAGS.CONTAINER_GRID_X}"
+                value="${containerVolume.width}"
+                min="1"
+                max="${CELL_INVENTORY.columns}"
+                step="1"
+                data-dtype="Number"
+                style="width: 4.5rem;"
+              />
+            </label>
+            <label style="display:flex; align-items:center; gap:0.35rem; margin:0;">
+              <span>${game.i18n.localize('CUSTOM_SECTIONS.CellInventory.SizeY')}</span>
+              <input
+                type="number"
+                class="cis-container-volume-input"
+                name="flags.${MODULE_ID}.${FLAGS.CONTAINER_GRID_Y}"
+                value="${containerVolume.height}"
+                min="1"
+                max="${CELL_INVENTORY.rows}"
+                step="1"
+                data-dtype="Number"
+                style="width: 4.5rem;"
+              />
+            </label>
+          </div>
+          <p class="notes">${game.i18n.localize('CUSTOM_SECTIONS.ContainerVolumeHint')}</p>
+        </div>`;
 
       const reductionFieldHtml = `
         <div class="form-group">
@@ -563,16 +864,22 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
 
       // Вставляем сразу после блока свойств контейнера, если он есть, иначе в конец вкладки
       const afterEl = containerOptionsRoot.find('.container-properties').last();
-      if (afterEl.length) afterEl.after(reductionFieldHtml);
-      else containerOptionsRoot.append(reductionFieldHtml);
+      if (afterEl.length) afterEl.after(volumeFieldHtml + reductionFieldHtml);
+      else containerOptionsRoot.append(volumeFieldHtml + reductionFieldHtml);
 
       // Синхронизация ползунка и числового ввода
       const $slider = containerOptionsRoot.find('.cis-wr-slider');
       const $input  = containerOptionsRoot.find('.cis-wr-input');
+      const $volumeInputs = containerOptionsRoot.find('.cis-container-volume-input');
       $slider.attr('data-edit', false);
       $input.attr('data-edit', false);
+      $volumeInputs.attr('data-edit', false);
 
       const clamp = (n) => Math.max(0, Math.min(100, Math.floor(Number(n) || 0)));
+      const clampVolume = (value, axis) => {
+        const max = axis === 'x' ? CELL_INVENTORY.columns : CELL_INVENTORY.rows;
+        return Math.max(1, Math.min(max, Math.floor(Number(value) || 1)));
+      };
       $slider.on('input change', (ev) => {
         const v = clamp(ev.currentTarget.value);
         $input.val(v);
@@ -586,6 +893,16 @@ Hooks.on('renderItemSheet', async (app, html, data) => {
         try {
           const val = clamp($input.val());
           await app.object.setFlag(MODULE_ID, FLAGS.WEIGHT_REDUCTION, val);
+        } catch (_) { /* ignore */ }
+      });
+      $volumeInputs.on('change', async (ev) => {
+        const input = ev.currentTarget;
+        const axis = input.name.endsWith(FLAGS.CONTAINER_GRID_X) ? 'x' : 'y';
+        const flag = axis === 'x' ? FLAGS.CONTAINER_GRID_X : FLAGS.CONTAINER_GRID_Y;
+        const value = clampVolume(input.value, axis);
+        input.value = value;
+        try {
+          await app.object.setFlag(MODULE_ID, flag, value);
         } catch (_) { /* ignore */ }
       });
 
@@ -907,7 +1224,11 @@ function applyGridInventory(app, html) {
 }
 
 function getCellInventoryRootItems(actor) {
-  return actor.items.filter(item => !item.system?.container && getItemTab(item) === 'inventory' && !isPaperDollInventoryHidden(item));
+  return actor.items.filter((item) => (
+    !item.system?.container
+    && getItemTab(item) === 'inventory'
+    && !shouldHideItemFromCellInventory(item)
+  ));
 }
 
 function sanitizeCellInventorySize(value) {
@@ -926,6 +1247,81 @@ function getCellInventorySize(itemLike) {
     x: readFlag(FLAGS.GRID_SIZE_X),
     y: readFlag(FLAGS.GRID_SIZE_Y)
   });
+}
+
+function getContainerGridSize(containerItem) {
+  const readFlag = (flag) => {
+    if (typeof containerItem?.getFlag === 'function') return containerItem.getFlag(MODULE_ID, flag);
+    return foundry.utils.getProperty(containerItem, `flags.${MODULE_ID}.${flag}`);
+  };
+
+  return sanitizeCellInventorySize({
+    x: readFlag(FLAGS.CONTAINER_GRID_X),
+    y: readFlag(FLAGS.CONTAINER_GRID_Y)
+  });
+}
+
+function createGridDimensions({ width = 1, height = 1 } = {}) {
+  return {
+    columns: Math.max(1, Math.floor(Number(width) || 1)),
+    rows: Math.max(1, Math.floor(Number(height) || 1))
+  };
+}
+
+function getCellInventoryGridDimensions(size = CELL_INVENTORY) {
+  return createGridDimensions({
+    width: size?.columns ?? size?.width ?? size?.x ?? CELL_INVENTORY.columns,
+    height: size?.rows ?? size?.height ?? size?.y ?? CELL_INVENTORY.rows
+  });
+}
+
+function getContainerGridLayout(containerItem) {
+  const size = getContainerGridSize(containerItem);
+  return createGridDimensions(size);
+}
+
+function getContainerItems(actor, containerId) {
+  if (!actor || !containerId) return [];
+  return actor.items.filter((item) => (
+    item.system?.container === containerId
+    && !shouldHideItemFromCellInventory(item)
+  ));
+}
+
+function shouldUseContainerCellInventoryGrid(app) {
+  try {
+    return typeof app?.useCellInventoryContainerGridPanels === 'function'
+      ? app.useCellInventoryContainerGridPanels() === true
+      : false;
+  } catch (_) {
+    return false;
+  }
+}
+
+function shouldToggleCellInventoryContainerOnClick(app) {
+  try {
+    return typeof app?.shouldToggleCellInventoryContainerOnClick === 'function'
+      ? app.shouldToggleCellInventoryContainerOnClick() !== false
+      : true;
+  } catch (_) {
+    return true;
+  }
+}
+
+function getCellInventoryPanelContainers(app) {
+  try {
+    if (typeof app?.getCellInventoryPanelContainers === 'function') {
+      const customContainers = app.getCellInventoryPanelContainers();
+      return Array.isArray(customContainers) ? customContainers.filter(Boolean) : [];
+    }
+  } catch (_) {
+    // Fall back to manual expansion below.
+  }
+
+  const expanded = getExpandedContainersForActor(app.actor.id);
+  return [...expanded]
+    .map((containerId) => app.actor.items.get(containerId))
+    .filter(Boolean);
 }
 
 function sanitizeCellInventorySortMode(value) {
@@ -993,36 +1389,38 @@ function compareCellInventoryItems(left, right, sortMode = CELL_INVENTORY_SORT_M
     || compareCellInventoryStrings(left?.id, right?.id);
 }
 
-function isCellInventoryPositionWithinBounds(position, size = { width: 1, height: 1 }) {
+function isCellInventoryPositionWithinBounds(position, size = { width: 1, height: 1 }, gridDimensions = CELL_INVENTORY) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
   const x = Number(position?.x);
   const y = Number(position?.y);
   if (!Number.isInteger(x) || !Number.isInteger(y)) return false;
   if (x < 0 || y < 0) return false;
-  if ((x + size.width) > CELL_INVENTORY.columns) return false;
-  if ((y + size.height) > CELL_INVENTORY.rows) return false;
+  if ((x + size.width) > grid.columns) return false;
+  if ((y + size.height) > grid.rows) return false;
   return true;
 }
 
-function sanitizeCellInventoryPosition(value, size = { width: 1, height: 1 }) {
+function sanitizeCellInventoryPosition(value, size = { width: 1, height: 1 }, gridDimensions = CELL_INVENTORY) {
   const x = Number(value?.x);
   const y = Number(value?.y);
   if (!Number.isInteger(x) || !Number.isInteger(y)) return null;
   const position = { x, y };
-  return isCellInventoryPositionWithinBounds(position, size) ? position : null;
+  return isCellInventoryPositionWithinBounds(position, size, gridDimensions) ? position : null;
 }
 
 function getCellInventoryPositionKey(position) {
   return `${position.x},${position.y}`;
 }
 
-function getCellInventoryAreaPositions(position, size, { clamp = false } = {}) {
+function getCellInventoryAreaPositions(position, size, { clamp = false, gridDimensions = CELL_INVENTORY } = {}) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
   const positions = [];
   const width = Number(size?.width ?? 1);
   const height = Number(size?.height ?? 1);
 
   for (let y = position.y; y < position.y + height; y += 1) {
     for (let x = position.x; x < position.x + width; x += 1) {
-      if (clamp && ((x < 0) || (y < 0) || (x >= CELL_INVENTORY.columns) || (y >= CELL_INVENTORY.rows))) continue;
+      if (clamp && ((x < 0) || (y < 0) || (x >= grid.columns) || (y >= grid.rows))) continue;
       positions.push({ x, y });
     }
   }
@@ -1030,16 +1428,16 @@ function getCellInventoryAreaPositions(position, size, { clamp = false } = {}) {
   return positions;
 }
 
-function markCellInventoryArea(occupiedCells, item, position, size) {
-  for (const cell of getCellInventoryAreaPositions(position, size)) {
+function markCellInventoryArea(occupiedCells, item, position, size, gridDimensions = CELL_INVENTORY) {
+  for (const cell of getCellInventoryAreaPositions(position, size, { gridDimensions })) {
     occupiedCells.set(getCellInventoryPositionKey(cell), item);
   }
 }
 
-function getConflictingCellInventoryItems(occupiedCells, position, size, ignoredIds = new Set()) {
+function getConflictingCellInventoryItems(occupiedCells, position, size, ignoredIds = new Set(), gridDimensions = CELL_INVENTORY) {
   const conflicts = new Map();
 
-  for (const cell of getCellInventoryAreaPositions(position, size, { clamp: true })) {
+  for (const cell of getCellInventoryAreaPositions(position, size, { clamp: true, gridDimensions })) {
     const item = occupiedCells.get(getCellInventoryPositionKey(cell));
     if (!item || ignoredIds.has(item.id)) continue;
     conflicts.set(item.id, item);
@@ -1055,7 +1453,7 @@ function warnCellInventoryDoesNotFit() {
   ));
 }
 
-function getCellInventoryGridPositionFromEvent(gridElement, event) {
+function getCellInventoryGridPositionFromEvent(gridElement, event, gridDimensions = CELL_INVENTORY) {
   const doc = gridElement?.ownerDocument ?? document;
   const clientX = Number(event?.clientX);
   const clientY = Number(event?.clientY);
@@ -1067,27 +1465,33 @@ function getCellInventoryGridPositionFromEvent(gridElement, event) {
       return sanitizeCellInventoryPosition({
         x: Number(cell.dataset.gridX),
         y: Number(cell.dataset.gridY)
-      });
+      }, { width: 1, height: 1 }, gridDimensions);
     }
   }
 
   const rect = gridElement.getBoundingClientRect();
-  const x = Math.floor((clientX - rect.left) / CELL_INVENTORY.cellSize);
-  const y = Math.floor((clientY - rect.top) / CELL_INVENTORY.cellSize);
-  return sanitizeCellInventoryPosition({ x, y });
+  const sampleCell = gridElement.querySelector('.cis-cell-inventory-cell');
+  const cellRect = sampleCell?.getBoundingClientRect?.();
+  const cellWidth = Math.max(1, Math.round(Number(cellRect?.width) || CELL_INVENTORY.cellSize));
+  const cellHeight = Math.max(1, Math.round(Number(cellRect?.height) || CELL_INVENTORY.cellSize));
+  const x = Math.floor((clientX - rect.left) / cellWidth);
+  const y = Math.floor((clientY - rect.top) / cellHeight);
+  return sanitizeCellInventoryPosition({ x, y }, { width: 1, height: 1 }, gridDimensions);
 }
 
-function setCellInventoryDragTarget(root, position, size, isValid = true) {
+function setCellInventoryDragTarget(root, position, size, isValid = true, scopeRoot = root) {
   root.find('.cis-cell-inventory-cell').removeClass('drag-over drag-invalid');
-  const preview = root.find('.cis-cell-inventory-drag-preview');
-  preview.removeClass('active invalid').attr('style', '');
+  root.find('.cis-cell-inventory-drag-preview').removeClass('active invalid').attr('style', '');
   if (!position) return;
+
+  const scope = scopeRoot instanceof jQuery ? scopeRoot : $(scopeRoot);
 
   const className = isValid ? 'drag-over' : 'drag-invalid';
   for (const cell of getCellInventoryAreaPositions(position, size, { clamp: true })) {
-    root.find(`.cis-cell-inventory-cell[data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`).addClass(className);
+    scope.find(`.cis-cell-inventory-cell[data-grid-x="${cell.x}"][data-grid-y="${cell.y}"]`).addClass(className);
   }
 
+  const preview = scope.find('.cis-cell-inventory-drag-preview').first();
   if (preview.length) {
     preview
       .addClass(`active${isValid ? '' : ' invalid'}`)
@@ -1095,24 +1499,25 @@ function setCellInventoryDragTarget(root, position, size, isValid = true) {
   }
 }
 
-function getStoredCellInventoryPosition(item, actorId = null) {
+function getStoredCellInventoryPosition(item, actorId = null, gridDimensions = CELL_INVENTORY) {
   const size = getCellInventorySize(item);
   const position = item.getFlag?.(MODULE_ID, FLAGS.GRID_POSITION);
-  const storedPosition = sanitizeCellInventoryPosition(position, size);
+  const storedPosition = sanitizeCellInventoryPosition(position, size, gridDimensions);
   if (storedPosition) return storedPosition;
 
   const cachedPosition = getCellInventoryPositionCache(actorId)?.get(item.id);
-  return sanitizeCellInventoryPosition(cachedPosition, size);
+  return sanitizeCellInventoryPosition(cachedPosition, size, gridDimensions);
 }
 
-function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, height: 1 }) {
-  const maxY = CELL_INVENTORY.rows - size.height;
-  const maxX = CELL_INVENTORY.columns - size.width;
+function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, height: 1 }, gridDimensions = CELL_INVENTORY) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
+  const maxY = grid.rows - size.height;
+  const maxX = grid.columns - size.width;
 
   for (let y = 0; y <= maxY; y += 1) {
     for (let x = 0; x <= maxX; x += 1) {
       const position = { x, y };
-      if (getConflictingCellInventoryItems(occupiedCells, position, size).length === 0) return position;
+      if (getConflictingCellInventoryItems(occupiedCells, position, size, new Set(), grid).length === 0) return position;
     }
   }
   return null;
@@ -1120,11 +1525,13 @@ function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, hei
 
 function buildCellInventoryLayout(items, {
   sortMode = CELL_INVENTORY_SORT_MODES.CATEGORY,
-  actorId = null
+  actorId = null,
+  gridDimensions = CELL_INVENTORY
 } = {}) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
   const sortedItems = [...items].sort((left, right) => {
-    const leftPosition = getStoredCellInventoryPosition(left, actorId);
-    const rightPosition = getStoredCellInventoryPosition(right, actorId);
+    const leftPosition = getStoredCellInventoryPosition(left, actorId, grid);
+    const rightPosition = getStoredCellInventoryPosition(right, actorId, grid);
     if (leftPosition && rightPosition) {
       return (leftPosition.y - rightPosition.y)
         || (leftPosition.x - rightPosition.x)
@@ -1142,30 +1549,30 @@ function buildCellInventoryLayout(items, {
 
   for (const item of sortedItems) {
     const size = getCellInventorySize(item);
-    const position = getStoredCellInventoryPosition(item, actorId);
+    const position = getStoredCellInventoryPosition(item, actorId, grid);
     if (!position) {
       pendingItems.push(item);
       continue;
     }
-    if (getConflictingCellInventoryItems(occupiedCells, position, size).length) {
+    if (getConflictingCellInventoryItems(occupiedCells, position, size, new Set(), grid).length) {
       pendingItems.push(item);
       continue;
     }
     placements.set(item.id, { position, size });
-    markCellInventoryArea(occupiedCells, item, position, size);
+    markCellInventoryArea(occupiedCells, item, position, size, grid);
   }
 
   pendingItems.sort((left, right) => compareCellInventoryItems(left, right, sortMode));
 
   for (const item of pendingItems) {
     const size = getCellInventorySize(item);
-    const position = findNextFreeCellInventoryPosition(occupiedCells, size);
+    const position = findNextFreeCellInventoryPosition(occupiedCells, size, grid);
     if (!position) {
       overflow.push(item);
       continue;
     }
     placements.set(item.id, { position, size });
-    markCellInventoryArea(occupiedCells, item, position, size);
+    markCellInventoryArea(occupiedCells, item, position, size, grid);
   }
 
   return { placements, occupiedCells, overflow };
@@ -1176,7 +1583,8 @@ function collectCellInventoryLayoutState(actor) {
   const sortMode = getCellInventorySortMode(actor);
   const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items, {
     sortMode,
-    actorId: actor?.id ?? null
+    actorId: actor?.id ?? null,
+    gridDimensions: CELL_INVENTORY
   });
   const positionCache = new Map();
   for (const item of items) {
@@ -1185,11 +1593,47 @@ function collectCellInventoryLayoutState(actor) {
     positionCache.set(item.id, foundry.utils.deepClone(placement.position));
   }
   if (actor?.id) cellInventoryPositionCacheByActor.set(actor.id, positionCache);
-  return { items, placements, occupiedCells, overflow, sortMode };
+  return {
+    items,
+    placements,
+    occupiedCells,
+    overflow,
+    sortMode,
+    gridDimensions: getCellInventoryGridDimensions(CELL_INVENTORY)
+  };
 }
 
-function getCellInventoryPlacementState(layoutState, position, size, ignoredIds = new Set()) {
-  const normalized = sanitizeCellInventoryPosition(position, size);
+function collectContainerInventoryLayoutState(actor, containerItem) {
+  const items = getContainerItems(actor, containerItem?.id);
+  const sortMode = getCellInventorySortMode(actor);
+  const gridDimensions = getContainerGridLayout(containerItem);
+  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items, {
+    sortMode,
+    actorId: actor?.id ?? null,
+    gridDimensions
+  });
+
+  return {
+    items,
+    placements,
+    occupiedCells,
+    overflow,
+    sortMode,
+    gridDimensions,
+    containerId: containerItem?.id ?? null
+  };
+}
+
+function getCellInventoryScopeLayoutState(app, containerId = null) {
+  if (!containerId) return collectCellInventoryLayoutState(app.actor);
+  const containerItem = app.actor.items.get(containerId);
+  if (!containerItem) return null;
+  return collectContainerInventoryLayoutState(app.actor, containerItem);
+}
+
+function getCellInventoryPlacementState(layoutState, position, size, ignoredIds = new Set(), gridDimensions = null) {
+  const grid = getCellInventoryGridDimensions(gridDimensions ?? layoutState?.gridDimensions ?? CELL_INVENTORY);
+  const normalized = sanitizeCellInventoryPosition(position, size, grid);
   if (!normalized) {
     return {
       position: null,
@@ -1199,7 +1643,7 @@ function getCellInventoryPlacementState(layoutState, position, size, ignoredIds 
   }
 
   const ignored = ignoredIds instanceof Set ? ignoredIds : new Set(ignoredIds ? [ignoredIds].flat() : []);
-  const conflicts = getConflictingCellInventoryItems(layoutState?.occupiedCells ?? new Map(), normalized, size, ignored);
+  const conflicts = getConflictingCellInventoryItems(layoutState?.occupiedCells ?? new Map(), normalized, size, ignored, grid);
   return {
     position: normalized,
     conflicts,
@@ -1325,20 +1769,20 @@ function createCellInventoryItemHtml(item, placement) {
   `;
 }
 
-function createCellInventoryHtml(app, layoutState = null) {
+function createCellInventoryGridMarkup(layoutState, { containerId = '' } = {}) {
   const {
     items,
     placements,
     occupiedCells,
-    overflow,
-    sortMode
-  } = layoutState ?? collectCellInventoryLayoutState(app.actor);
-  const toolbarMeta = getCellInventoryToolbarMeta(app);
+    gridDimensions
+  } = layoutState;
+  const grid = getCellInventoryGridDimensions(gridDimensions);
+  const gridStyle = `grid-template-columns: repeat(${grid.columns}, var(--cis-cell-size, 100px)); grid-template-rows: repeat(${grid.rows}, var(--cis-cell-size, 100px));`;
   const cells = [];
   const renderedItems = [];
 
-  for (let y = 0; y < CELL_INVENTORY.rows; y += 1) {
-    for (let x = 0; x < CELL_INVENTORY.columns; x += 1) {
+  for (let y = 0; y < grid.rows; y += 1) {
+    for (let x = 0; x < grid.columns; x += 1) {
       const position = { x, y };
       const key = getCellInventoryPositionKey(position);
       const item = occupiedCells.get(key);
@@ -1359,6 +1803,25 @@ function createCellInventoryHtml(app, layoutState = null) {
     renderedItems.push(createCellInventoryItemHtml(item, placement));
   }
 
+  return `
+    <div class="cis-cell-inventory-grid-stack" data-container-id="${escapeHtml(containerId)}">
+      <div class="cis-cell-inventory-grid cis-cell-inventory-cells" style="${gridStyle}">
+        ${cells.join('')}
+      </div>
+      <div class="cis-cell-inventory-grid cis-cell-inventory-items" style="${gridStyle}">
+        ${renderedItems.join('')}
+        <div class="cis-cell-inventory-drag-preview" aria-hidden="true"></div>
+      </div>
+    </div>
+  `;
+}
+
+function createCellInventoryHtml(app, layoutState = null) {
+  const {
+    overflow,
+    sortMode
+  } = layoutState ?? collectCellInventoryLayoutState(app.actor);
+  const toolbarMeta = getCellInventoryToolbarMeta(app);
   const overflowHtml = overflow.length
     ? `<div class="cis-cell-inventory-overflow">${escapeHtml(formatLocalizeSafe(
         'CUSTOM_SECTIONS.CellInventory.Overflow',
@@ -1371,18 +1834,14 @@ function createCellInventoryHtml(app, layoutState = null) {
     <div class="cis-cell-inventory-shell">
       ${createCellInventorySortControls(sortMode, toolbarMeta)}
       <div class="cis-cell-inventory-scroll">
-        <div class="cis-cell-inventory-grid-stack">
-          <div class="cis-cell-inventory-grid cis-cell-inventory-cells">
-            ${cells.join('')}
+        <div class="cis-cell-inventory-content">
+          <div class="cis-cell-inventory-scope cis-cell-inventory-root-scope" data-scope-type="root">
+            ${createCellInventoryGridMarkup(layoutState ?? collectCellInventoryLayoutState(app.actor))}
           </div>
-          <div class="cis-cell-inventory-grid cis-cell-inventory-items">
-            ${renderedItems.join('')}
-            <div class="cis-cell-inventory-drag-preview" aria-hidden="true"></div>
-          </div>
+          ${overflowHtml}
+          <div class="cis-cell-inventory-panels"></div>
         </div>
       </div>
-      ${overflowHtml}
-      <div class="cis-cell-inventory-panels"></div>
     </div>
   `;
 }
@@ -1398,16 +1857,19 @@ async function renderCellInventoryPanels(app, root) {
   if (!panelHost.length) return;
   panelHost.empty();
 
+  const hasCustomContainerList = typeof app?.getCellInventoryPanelContainers === 'function';
   const expanded = getExpandedContainersForActor(app.actor.id);
-  if (!expanded.size) return;
+  const containerItems = getCellInventoryPanelContainers(app);
+  if (!containerItems.length) return;
 
-  for (const containerId of [...expanded]) {
-    const containerItem = app.actor.items.get(containerId);
+  for (const containerItem of containerItems) {
     if (!containerItem || containerItem.type !== 'container' || containerItem.system?.container || getItemTab(containerItem) !== 'inventory') {
-      expanded.delete(containerId);
+      if (!hasCustomContainerList && containerItem?.id) expanded.delete(containerItem.id);
       continue;
     }
-    const panel = await buildContainerContentsPanel(app, containerItem);
+    const panel = shouldUseContainerCellInventoryGrid(app)
+      ? await buildContainerCellInventoryPanel(app, containerItem)
+      : await buildContainerContentsPanel(app, containerItem);
     panel.addClass('cis-cell-inventory-panel');
     panelHost.append(panel);
   }
@@ -1542,6 +2004,17 @@ async function createExternalItemAtCell(app, dropData, position, event) {
   }
 }
 
+function getCellInventoryGridScopeContext(app, gridElement) {
+  const scopeElement = gridElement?.closest?.('.cis-cell-inventory-scope') ?? null;
+  const containerId = scopeElement?.dataset?.containerId || gridElement?.dataset?.containerId || null;
+  const layoutState = getCellInventoryScopeLayoutState(app, containerId);
+  return {
+    containerId,
+    layoutState,
+    scopeRoot: scopeElement ? $(scopeElement) : $(gridElement)
+  };
+}
+
 function applyCellInventory(app, html) {
   const inventoryTab = html.find('.tab.inventory');
   if (!inventoryTab.length) return;
@@ -1583,17 +2056,19 @@ function applyCellInventory(app, html) {
     if (event.shiftKey && (item.system?.equipped !== undefined)) {
       event.preventDefault();
       event.stopPropagation();
-      await toggleEquip(item, itemElement);
+      await toggleEquip(item, itemElement, { app, html });
       return;
     }
 
     if (item.type === 'container') {
       event.preventDefault();
       event.stopPropagation();
-      const expanded = getExpandedContainersForActor(app.actor.id);
-      if (expanded.has(item.id)) expanded.delete(item.id);
-      else expanded.add(item.id);
-      applyCellInventory(app, html);
+      if (shouldToggleCellInventoryContainerOnClick(app)) {
+        const expanded = getExpandedContainersForActor(app.actor.id);
+        if (expanded.has(item.id)) expanded.delete(item.id);
+        else expanded.add(item.id);
+        applyCellInventory(app, html);
+      }
       return;
     }
 
@@ -1625,12 +2100,18 @@ function applyCellInventory(app, html) {
   host.on('dragover.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
     event.preventDefault();
     const nativeEvent = event.originalEvent ?? event;
-    const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
+    const scopeContext = getCellInventoryGridScopeContext(app, event.currentTarget);
+    if (!scopeContext.layoutState) return;
+    const targetPosition = getCellInventoryGridPositionFromEvent(
+      event.currentTarget,
+      nativeEvent,
+      scopeContext.layoutState.gridDimensions
+    );
     const { dragSize, ignoredIds } = getCellInventoryDragState(app, nativeEvent);
-    const placementState = getCellInventoryPlacementState(layoutState, targetPosition, dragSize, ignoredIds);
+    const placementState = getCellInventoryPlacementState(scopeContext.layoutState, targetPosition, dragSize, ignoredIds);
     const isValid = placementState.isValid;
     if (nativeEvent.dataTransfer) nativeEvent.dataTransfer.dropEffect = isValid ? 'move' : 'none';
-    setCellInventoryDragTarget(host, placementState.position, dragSize, isValid);
+    setCellInventoryDragTarget(host, placementState.position, dragSize, isValid, scopeContext.scopeRoot);
   });
 
   host.on('dragleave.cis-cell-inventory', '.cis-cell-inventory-grid-stack', (event) => {
@@ -1650,18 +2131,30 @@ function applyCellInventory(app, html) {
     event.preventDefault();
     nativeEvent.preventDefault?.();
 
-    const targetPosition = getCellInventoryGridPositionFromEvent(event.currentTarget, nativeEvent);
+    const scopeContext = getCellInventoryGridScopeContext(app, event.currentTarget);
+    if (!scopeContext.layoutState) return;
+    const targetPosition = getCellInventoryGridPositionFromEvent(
+      event.currentTarget,
+      nativeEvent,
+      scopeContext.layoutState.gridDimensions
+    );
     if (!targetPosition) return;
 
+    const targetContainer = scopeContext.containerId ? app.actor.items.get(scopeContext.containerId) ?? null : null;
     const droppedItem = await resolveDroppedItem(app, dropData);
     const sameActorItem = (dropData.type === 'Item') && (droppedItem?.parent === app.actor);
     if (!sameActorItem) {
       event.preventDefault();
       event.stopPropagation();
       if (dropData.type !== 'Item') {
-        if (typeof app._onDrop === 'function') {
+        if (!targetContainer && typeof app._onDrop === 'function') {
           await app._onDrop(nativeEvent);
         }
+        return;
+      }
+      if (targetContainer) {
+        if (!droppedItem) return;
+        await moveItemToContainer(app, droppedItem, targetContainer, { dropData, position: targetPosition });
         return;
       }
       await createExternalItemAtCell(app, dropData, targetPosition, nativeEvent);
@@ -1673,8 +2166,13 @@ function applyCellInventory(app, html) {
     if (!droppedItem) return;
     let localItem = droppedItem;
     if (getItemTab(localItem) !== 'inventory') return;
+    if (targetContainer) {
+      if (targetContainer.id === localItem.id) return;
+      await moveItemToContainer(app, localItem, targetContainer, { dropData, position: targetPosition });
+      return;
+    }
     const placementState = getCellInventoryPlacementState(
-      layoutState,
+      scopeContext.layoutState,
       targetPosition,
       getCellInventorySize(localItem),
       new Set([localItem.id])
@@ -1741,7 +2239,7 @@ function addCustomSectionsToDOM(app, html, data) {
     // Пропускаем предметы, которые уже находятся в контейнерах
     if (item.system?.container) return;
     const itemTab = getItemTab(item);
-    if (itemTab === 'inventory' && isPaperDollInventoryHidden(item)) return;
+    if (itemTab === 'inventory' && shouldHideItemFromCellInventory(item)) return;
     const customSectionName = item.getFlag(MODULE_ID, FLAGS.SECTION);
     
     // Проверяем, что customSectionName является строкой и не пустая после trim
@@ -2430,11 +2928,15 @@ function wireItemDragDrop(app, $elements) {
 }
 
 // Переключение экипировки с обновлением классов и подсветки
-async function toggleEquip(item, liElement) {
+async function toggleEquip(item, liElement, { app = null, html = null } = {}) {
   const equipped = Boolean(item.system?.equipped);
   await item.update({ 'system.equipped': !equipped });
   const li = liElement instanceof HTMLElement ? liElement : (liElement?.[0] ?? null);
   if (li) li.classList.toggle('equipped', !equipped);
+
+  if (item.type !== 'container' || !app || !shouldUseContainerCellInventoryGrid(app)) return;
+  const currentHtml = html instanceof jQuery ? html : (app.element instanceof jQuery ? app.element : $(app.element));
+  if (currentHtml?.length) applyCellInventory(app, currentHtml);
 }
 
 // Переключить inline-разворот контейнера
@@ -2479,10 +2981,69 @@ async function toggleInlineContainer(app, html, liElement, containerItem) {
 }
 
 // Построить панель содержимого контейнера
+function getContainerUsedSlotCount(items = []) {
+  return items.reduce((total, item) => {
+    const size = getCellInventorySize(item);
+    return total + (size.width * size.height);
+  }, 0);
+}
+
+function getContainerCapacityHint(containerItem, capacity) {
+  const capacityLabel = game.i18n.localize(CONFIG.DND5E.itemCapacityTypes?.[containerItem.system.capacity?.type || 'weight'] ?? '');
+  const value = Math.round(Number(capacity?.value ?? 0) * 100) / 100;
+  const max = Number(capacity?.max);
+  const maxLabel = Number.isFinite(max) ? max : '&infin;';
+  const units = capacity?.units ? ` ${escapeHtml(capacity.units)}` : '';
+  if (!capacityLabel) return `${value} / ${maxLabel}${units}`;
+  return `${escapeHtml(capacityLabel)}: ${value} / ${maxLabel}${units}`;
+}
+
+async function buildContainerCellInventoryPanel(app, containerItem) {
+  const layoutState = collectContainerInventoryLayoutState(app.actor, containerItem);
+  const grid = layoutState.gridDimensions;
+  const capacity = await containerItem.system.computeCapacity();
+  const slotsLabel = escapeHtml(localizeSafe('CUSTOM_SECTIONS.ContainerSlots', 'Slots'));
+  const volumeLabel = escapeHtml(localizeSafe('CUSTOM_SECTIONS.ContainerVolumeShort', 'Volume'));
+  const usedSlots = getContainerUsedSlotCount(layoutState.items);
+  const totalSlots = grid.columns * grid.rows;
+  const overflowHtml = layoutState.overflow.length
+    ? `<div class="cis-cell-inventory-overflow">${escapeHtml(formatLocalizeSafe(
+        'CUSTOM_SECTIONS.CellInventory.Overflow',
+        { count: layoutState.overflow.length },
+        `Overflow: ${layoutState.overflow.length}`
+      ))}</div>`
+    : '';
+
+  const $panel = $(`
+    <section
+      class="cis-container-contents card cis-cell-inventory-scope cis-cell-inventory-container-scope"
+      data-scope-type="container"
+      data-container-id="${containerItem.id}"
+    >
+      <div class="cis-container-header">
+        <h4><i class="fa-solid fa-box-open"></i> ${escapeHtml(containerItem.name)}</h4>
+        <div class="spacer"></div>
+        <div class="hint">${getContainerCapacityHint(containerItem, capacity)}</div>
+      </div>
+      <div class="cis-container-grid-meta">
+        <span>${slotsLabel}: ${usedSlots} / ${totalSlots}</span>
+        <span>${volumeLabel}: ${grid.columns} x ${grid.rows}</span>
+      </div>
+      <div class="cis-cell-inventory-panel-scroll">
+        ${createCellInventoryGridMarkup(layoutState, { containerId: containerItem.id })}
+      </div>
+      ${overflowHtml}
+    </section>
+  `);
+
+  $panel.find('.item-tooltip').each((_, element) => applyItemTooltips(element, app));
+  return $panel;
+}
+
 async function buildContainerContentsPanel(app, containerItem) {
   const gridOn = isIconGridInventoryEnabled() || isCellInventoryEnabled();
   const contents = await resolveMaybePromise(containerItem.system.contents);
-  const items = Array.from(contents?.values?.() ?? []);
+  const items = Array.from(contents?.values?.() ?? []).filter((item) => !shouldHideItemFromCellInventory(item));
 
   const byGroup = new Map();
   for (const it of items) {
@@ -2619,7 +3180,7 @@ async function resolveDroppedItem(app, dropData) {
   return null;
 }
 
-async function moveItemToContainer(app, droppedItem, containerItem, dropData = null) {
+async function _legacyMoveItemToContainer(app, droppedItem, containerItem, dropData = null) {
   // Сколько переносить?
   const qty = Number(droppedItem.system?.quantity ?? 1);
   // Проверка категорий
@@ -2682,8 +3243,123 @@ async function moveItemToContainer(app, droppedItem, containerItem, dropData = n
   }
 }
 
+function normalizeMoveItemToContainerOptions(options = null) {
+  if (options && typeof options === 'object' && !Array.isArray(options) && ('dropData' in options || 'position' in options)) {
+    return {
+      dropData: options.dropData ?? null,
+      position: options.position ?? null
+    };
+  }
+
+  return {
+    dropData: options ?? null,
+    position: null
+  };
+}
+
+async function moveItemToContainer(app, droppedItem, containerItem, options = null) {
+  const { dropData = null, position = null } = normalizeMoveItemToContainerOptions(options);
+  const isSameActorItem = droppedItem?.parent === app.actor;
+  const isPaperDollDrop = isPaperDollSourceDropData(dropData) || isPaperDollInventoryHidden(droppedItem);
+  const isRepositionInSameContainer = isSameActorItem && (droppedItem.system?.container === containerItem.id);
+
+  if (isRepositionInSameContainer) {
+    if (!position) return;
+    const sourceItem = isPaperDollDrop
+      ? await normalizePaperDollDraggedItem(app, droppedItem, dropData, { cisSkipAutoUnequipPlacement: true })
+      : droppedItem;
+    const layoutState = collectContainerInventoryLayoutState(app.actor, containerItem);
+    const placementState = getCellInventoryPlacementState(
+      layoutState,
+      position,
+      getCellInventorySize(sourceItem),
+      new Set([sourceItem.id]),
+      layoutState.gridDimensions
+    );
+    if (!placementState.isValid) {
+      ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.SlotCapacityExceeded'));
+      return;
+    }
+    await sourceItem.update({
+      [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: placementState.position
+    }, {
+      cisSkipAutoUnequipPlacement: true
+    });
+    return;
+  }
+
+  const qty = Number(droppedItem.system?.quantity ?? 1);
+  if (!isItemAllowedByCategory(containerItem, droppedItem)) {
+    ui.notifications?.warn?.(game.i18n.localize('CUSTOM_SECTIONS.CategoryReject'));
+    return;
+  }
+
+  const fitState = await computeMaxFittableQuantity(containerItem, droppedItem, {
+    preferredPosition: position,
+    actor: app.actor
+  });
+  if (fitState.maxQuantity <= 0) {
+    const reasonKey = fitState.reason === 'slots'
+      ? 'CUSTOM_SECTIONS.SlotCapacityExceeded'
+      : 'CUSTOM_SECTIONS.CapacityExceeded';
+    ui.notifications?.warn?.(game.i18n.localize(reasonKey));
+    return;
+  }
+
+  let amount = Math.min(qty, fitState.maxQuantity);
+  if (qty > 1) amount = await promptForQuantity({ title: droppedItem.name, max: fitState.maxQuantity });
+  if (!amount || amount < 1) return;
+
+  if (isSameActorItem) {
+    const sourceItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData, {
+      cisSkipAutoUnequipPlacement: true
+    });
+    const sourceQty = Number(sourceItem.system?.quantity ?? 1);
+    const mergeTarget = findMergeTarget(app.actor, sourceItem, containerItem.id);
+
+    if (amount < sourceQty) {
+      if (mergeTarget) {
+        await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+        await sourceItem.update({ 'system.quantity': sourceQty - amount });
+      } else {
+        const newData = foundry.utils.duplicate(sourceItem.toObject());
+        newData.system.quantity = amount;
+        newData.system.container = containerItem.id;
+        foundry.utils.setProperty(newData, `flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`, fitState.position);
+        await app.actor.createEmbeddedDocuments('Item', [newData]);
+        await sourceItem.update({ 'system.quantity': sourceQty - amount });
+      }
+    } else if (mergeTarget) {
+      await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + sourceQty });
+      await sourceItem.delete();
+    } else {
+      await sourceItem.update({
+        'system.container': containerItem.id,
+        [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: fitState.position
+      });
+    }
+    return;
+  }
+
+  const data = droppedItem?.toObject ? droppedItem.toObject() : droppedItem;
+  if (!data) return;
+  data.system = data.system ?? {};
+  data.system.quantity = amount;
+
+  const mergeTarget = findMergeTarget(app.actor, data, containerItem.id);
+  if (mergeTarget) {
+    await mergeTarget.update({ 'system.quantity': Number(mergeTarget.system.quantity ?? 0) + amount });
+  } else {
+    foundry.utils.setProperty(data, 'system.container', containerItem.id);
+    foundry.utils.setProperty(data, `flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`, fitState.position);
+    await app.actor.createEmbeddedDocuments('Item', [data]);
+  }
+}
+
 async function moveItemToRoot(app, droppedItem, dropData = null) {
-  const normalizedItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData);
+  const normalizedItem = await normalizePaperDollDraggedItem(app, droppedItem, dropData, {
+    cisSkipAutoUnequipPlacement: true
+  });
   const qty = Number(normalizedItem.system?.quantity ?? 1);
   let amount = qty;
   if (qty > 1) amount = await promptForQuantity({ title: normalizedItem.name, max: qty });
@@ -2732,6 +3408,7 @@ function findMergeTarget(actor, sourceItemLike, containerId) {
   const key = getMergeKey(sourceItemLike);
   return actor.items.find(i => (i.system?.container ?? null) === (containerId ?? null)
     && i.id !== sourceItemLike.id
+    && !shouldHideItemFromCellInventory(i)
     && !isNonStackableItemLike(i)
     && getMergeKey(i) === key);
 }
@@ -2888,7 +3565,7 @@ function isItemAllowedByCategory(containerItem, itemLike) {
   return mode === 'deny' ? !inList : inList; // deny = все, кроме перечисленных; allow = только перечисленные
 }
 
-async function computeMaxFittableQuantity(containerItem, itemLike) {
+async function _legacyComputeMaxFittableQuantity(containerItem, itemLike) {
   try {
     const capacity = containerItem.system?.capacity;
     if (!capacity) return Number(itemLike.system?.quantity ?? 1);
@@ -2914,6 +3591,116 @@ async function computeMaxFittableQuantity(containerItem, itemLike) {
   } catch (e) {
     console.warn(`${MODULE_ID} | computeMaxFittableQuantity failed`, e);
     return Number(itemLike.system?.quantity ?? 1);
+  }
+}
+
+function doesCellInventorySizeFitGrid(size, gridDimensions = CELL_INVENTORY) {
+  const grid = getCellInventoryGridDimensions(gridDimensions);
+  return size.width <= grid.columns && size.height <= grid.rows;
+}
+
+function resolveContainerGridPlacement(actor, containerItem, itemLike, {
+  preferredPosition = null,
+  ignoredIds = new Set()
+} = {}) {
+  const gridDimensions = getContainerGridLayout(containerItem);
+  const size = getCellInventorySize(itemLike);
+  if (!doesCellInventorySizeFitGrid(size, gridDimensions)) {
+    return { position: null, reason: 'slots', gridDimensions };
+  }
+
+  const layoutState = collectContainerInventoryLayoutState(actor, containerItem);
+  if (preferredPosition) {
+    const preferredPlacement = getCellInventoryPlacementState(
+      layoutState,
+      preferredPosition,
+      size,
+      ignoredIds,
+      gridDimensions
+    );
+    if (preferredPlacement.isValid) {
+      return { position: preferredPlacement.position, reason: null, gridDimensions, layoutState };
+    }
+    return { position: null, reason: 'slots', gridDimensions, layoutState };
+  }
+
+  const autoPosition = findNextFreeCellInventoryPosition(layoutState.occupiedCells, size, gridDimensions);
+  return {
+    position: autoPosition,
+    reason: autoPosition ? null : 'slots',
+    gridDimensions,
+    layoutState
+  };
+}
+
+async function computeMaxFittableQuantity(containerItem, itemLike, options = {}) {
+  const actor = options.actor ?? containerItem?.parent ?? null;
+  try {
+    const qty = Math.max(1, Number(itemLike.system?.quantity ?? 1));
+    const capacity = containerItem.system?.capacity;
+    let maxQuantity = qty;
+
+    if (capacity) {
+      const max = Number(capacity.value ?? Infinity);
+      if (Number.isFinite(max)) {
+        if (capacity.type === 'items') {
+          const current = await containerItem.system.contentsCount;
+          const remaining = Math.max(0, Math.floor(max - current));
+          maxQuantity = Math.max(0, Math.min(remaining, qty));
+        } else {
+          const units = containerItem.system.weight?.units || (game.settings.get('dnd5e', 'metricWeightUnits') ? 'kg' : 'lb');
+          const current = await containerItem.system.contentsWeight;
+          const remainingWeight = Math.max(0, (max - current));
+          const totalItemWeight = itemLike.system?.totalWeightIn?.(units) ?? 0;
+          const perUnit = qty > 0 ? (totalItemWeight / qty) : totalItemWeight;
+          maxQuantity = perUnit <= 0
+            ? qty
+            : Math.max(0, Math.min(qty, Math.floor(remainingWeight / perUnit)));
+        }
+      }
+    }
+
+    if (maxQuantity <= 0) {
+      return { maxQuantity: 0, reason: 'capacity', position: null, mergeTarget: null };
+    }
+
+    const mergeTarget = actor ? findMergeTarget(actor, itemLike, containerItem.id) : null;
+    if (mergeTarget) {
+      return {
+        maxQuantity,
+        reason: null,
+        position: getStoredCellInventoryPosition(mergeTarget, actor?.id ?? null, getContainerGridLayout(containerItem)),
+        mergeTarget
+      };
+    }
+
+    const placement = resolveContainerGridPlacement(actor, containerItem, itemLike, {
+      preferredPosition: options.preferredPosition ?? null,
+      ignoredIds: options.ignoredIds ?? new Set()
+    });
+    if (!placement.position) {
+      return {
+        maxQuantity: 0,
+        reason: placement.reason ?? 'slots',
+        position: null,
+        mergeTarget: null
+      };
+    }
+
+    return {
+      maxQuantity,
+      reason: null,
+      position: placement.position,
+      mergeTarget: null
+    };
+  } catch (e) {
+    console.warn(`${MODULE_ID} | computeMaxFittableQuantity failed`, e);
+    return {
+      maxQuantity: Number(itemLike.system?.quantity ?? 1),
+      reason: null,
+      position: null,
+      mergeTarget: null
+    };
   }
 }
 

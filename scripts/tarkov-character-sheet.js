@@ -609,6 +609,22 @@ Hooks.once("init", () => {
       };
     }
 
+    useCellInventoryContainerGridPanels() {
+      return true;
+    }
+
+    shouldToggleCellInventoryContainerOnClick() {
+      return false;
+    }
+
+    getCellInventoryPanelContainers() {
+      return this.actor.items.filter((item) => (
+        item.type === "container"
+        && !item.system?.container
+        && Boolean(item.system?.equipped)
+      ));
+    }
+
     async close(options = {}) {
       this.#removeViewportResizeHandler();
       return super.close(options);

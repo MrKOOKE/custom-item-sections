@@ -763,11 +763,27 @@
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-shell {
   height: 100%;
+  min-height: 0;
 }
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   padding-right: calc(0.2rem * var(--cis-ui-scale));
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-content {
+  display: grid;
+  align-content: start;
+  gap: calc(0.75rem * var(--cis-ui-scale));
+  width: max-content;
+  min-width: 100%;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-root-scope {
+  width: max-content;
+  min-width: 100%;
 }
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-grid-stack {
@@ -778,6 +794,67 @@
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-panels {
   display: grid;
   gap: calc(0.75rem * var(--cis-ui-scale));
+  min-width: 100%;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-container-scope {
+  display: grid;
+  gap: calc(0.5rem * var(--cis-ui-scale));
+  padding: calc(0.75rem * var(--cis-ui-scale));
+  border: 1px solid rgba(228, 205, 144, 0.18);
+  border-radius: calc(14px * var(--cis-ui-scale));
+  background:
+    linear-gradient(180deg, rgba(20, 25, 33, 0.96), rgba(9, 12, 18, 0.98)),
+    linear-gradient(135deg, rgba(228, 205, 144, 0.08), transparent 55%);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.02),
+    0 10px 24px rgba(0, 0, 0, 0.22);
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-container-scope .cis-container-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: calc(0.45rem * var(--cis-ui-scale));
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-container-scope .cis-container-header h4 {
+  margin: 0;
+  color: var(--cis-text);
+  font-size: calc(0.9rem * var(--cis-ui-scale));
+  letter-spacing: 0.04em;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-container-scope .cis-container-header .hint {
+  color: var(--cis-text-soft);
+  font-size: calc(0.68rem * var(--cis-ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-container-grid-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(0.45rem * var(--cis-ui-scale));
+}
+
+.cis-tarkov-shell .tab.inventory .cis-container-grid-meta span {
+  display: inline-flex;
+  align-items: center;
+  min-height: calc(26px * var(--cis-ui-scale));
+  padding: 0 calc(0.5rem * var(--cis-ui-scale));
+  border: 1px solid rgba(228, 205, 144, 0.16);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--cis-accent);
+  font-size: calc(0.66rem * var(--cis-ui-scale));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-panel-scroll {
+  overflow: visible;
+  padding-bottom: calc(0.15rem * var(--cis-ui-scale));
 }
 
 @media (max-width: 1280px) {

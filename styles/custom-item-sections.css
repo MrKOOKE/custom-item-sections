@@ -284,6 +284,14 @@
   padding-bottom: calc(0.25rem * var(--cis-ui-scale, 1));
 }
 
+.tab.inventory .cis-cell-inventory-content {
+  display: flex;
+  flex-direction: column;
+  gap: calc(0.75rem * var(--cis-ui-scale, 1));
+  width: max-content;
+  min-width: 100%;
+}
+
 .tab.inventory .cis-cell-inventory-grid-stack {
   position: relative;
   width: max-content;
@@ -450,10 +458,15 @@
   display: flex;
   flex-direction: column;
   gap: calc(0.75rem * var(--cis-ui-scale, 1));
+  min-width: 100%;
 }
 
 .tab.inventory .cis-cell-inventory-panel {
   margin-top: 0;
+}
+
+.tab.inventory .cis-cell-inventory-panel-scroll {
+  overflow: visible;
 }
 
 /* Диалог выбора количества */
