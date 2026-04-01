@@ -12,6 +12,8 @@ import {
 const SHEET_LABEL = "CIS: Тактический лист";
 const TEMPLATE_PATH = "modules/custom-item-sections/templates/actors/tarkov-character-sheet.hbs";
 const SHEET_CLASSES = ["cis-tarkov-sheet"];
+const BASE_VIEWPORT = Object.freeze({ width: 2560, height: 1440 });
+const MIN_UI_SCALE = 0.6;
 
 const TABS = Object.freeze([
   { id: "equipment", label: "Снаряжение", placeholder: "" },
@@ -519,12 +521,27 @@ function getFullscreenBounds() {
   };
 }
 
+function getResponsiveUiScale() {
+  const viewportWidth = Number(globalThis.innerWidth ?? 0);
+  const viewportHeight = Number(globalThis.innerHeight ?? 0);
+  if (!(viewportWidth > 0) || !(viewportHeight > 0)) return 1;
+
+  const widthScale = viewportWidth / BASE_VIEWPORT.width;
+  const heightScale = viewportHeight / BASE_VIEWPORT.height;
+  const scale = Math.min(widthScale, heightScale);
+  if (!Number.isFinite(scale)) return 1;
+
+  return Math.max(MIN_UI_SCALE, Math.min(1, scale));
+}
+
 Hooks.once("init", () => {
   if (game.system?.id !== "dnd5e") return;
 
   const BaseSheet = globalThis.dnd5e?.applications?.actor?.ActorSheet5eCharacter ?? ActorSheet;
 
   class CustomItemSectionsTarkovSheet extends BaseSheet {
+    _cisViewportResizeHandler = null;
+
     static get defaultOptions() {
       const options = super.defaultOptions ?? {};
       const fullscreen = getFullscreenBounds();
@@ -556,6 +573,8 @@ Hooks.once("init", () => {
     async _render(force = false, options = {}) {
       await super._render(force, options);
       if (!this.rendered) return;
+      this.#ensureViewportResizeHandler();
+      this.#applyResponsiveUiScale();
       this.setPosition();
     }
 
@@ -590,8 +609,14 @@ Hooks.once("init", () => {
       };
     }
 
+    async close(options = {}) {
+      this.#removeViewportResizeHandler();
+      return super.close(options);
+    }
+
     activateListeners(html) {
       super.activateListeners(html);
+      this.#applyResponsiveUiScale();
       applyCellInventory(this, html);
       this.#activateGearSlots(html);
       this.#activateWeaponSets(html);
@@ -606,6 +631,30 @@ Hooks.once("init", () => {
         const button = this._cisHeaderButtons?.find((candidate) => candidate._cisId === buttonId);
         if (typeof button?.onclick === "function") button.onclick(event);
       });
+    }
+
+    #ensureViewportResizeHandler() {
+      if (this._cisViewportResizeHandler) return;
+      this._cisViewportResizeHandler = () => {
+        if (!this.rendered) return;
+        this.#applyResponsiveUiScale();
+        this.setPosition();
+      };
+      globalThis.addEventListener("resize", this._cisViewportResizeHandler, { passive: true });
+    }
+
+    #removeViewportResizeHandler() {
+      if (!this._cisViewportResizeHandler) return;
+      globalThis.removeEventListener("resize", this._cisViewportResizeHandler);
+      this._cisViewportResizeHandler = null;
+    }
+
+    #applyResponsiveUiScale() {
+      const scale = getResponsiveUiScale();
+      const appElement = this.element?.[0];
+      if (!(appElement instanceof HTMLElement)) return;
+      appElement.style.setProperty("--cis-ui-scale", String(scale));
+      appElement.dataset.cisUiScale = scale.toFixed(3);
     }
 
     #activateDragHighlights(html) {

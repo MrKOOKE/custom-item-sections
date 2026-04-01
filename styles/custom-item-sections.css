@@ -181,14 +181,14 @@
 .tab.inventory .cis-cell-inventory-shell {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--cis-ui-scale, 1));
 }
 
 .tab.inventory .cis-cell-inventory-toolbar {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  padding: 0 0.25rem;
+  padding: 0 calc(0.25rem * var(--cis-ui-scale, 1));
 }
 
 .tab.inventory .cis-cell-inventory-sort-menu {
@@ -207,9 +207,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 8px;
+  width: calc(34px * var(--cis-ui-scale, 1));
+  height: calc(34px * var(--cis-ui-scale, 1));
+  border-radius: calc(8px * var(--cis-ui-scale, 1));
   border: 1px solid rgba(232, 212, 136, 0.25);
   background: linear-gradient(180deg, rgba(59, 51, 33, 0.95) 0%, rgba(30, 32, 40, 0.98) 100%);
   color: #E8D488;
@@ -224,14 +224,14 @@
 
 .tab.inventory .cis-cell-inventory-sort-dropdown {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + calc(6px * var(--cis-ui-scale, 1)));
   left: 0;
   z-index: 6;
   display: flex;
   flex-direction: column;
-  min-width: 170px;
-  padding: 6px;
-  border-radius: 10px;
+  min-width: calc(170px * var(--cis-ui-scale, 1));
+  padding: calc(6px * var(--cis-ui-scale, 1));
+  border-radius: calc(10px * var(--cis-ui-scale, 1));
   border: 1px solid rgba(232, 212, 136, 0.28);
   background: rgba(15, 17, 24, 0.98);
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.45);
@@ -241,10 +241,10 @@
   display: flex;
   align-items: center;
   width: 100%;
-  min-height: 32px;
-  padding: 0.4rem 0.65rem;
+  min-height: calc(32px * var(--cis-ui-scale, 1));
+  padding: calc(0.4rem * var(--cis-ui-scale, 1)) calc(0.65rem * var(--cis-ui-scale, 1));
   border: 0;
-  border-radius: 7px;
+  border-radius: calc(7px * var(--cis-ui-scale, 1));
   background: transparent;
   color: #D8D6CE;
   text-align: left;
@@ -267,9 +267,9 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.75rem;
-  padding: 0 0.25rem;
-  font-size: 12px;
+  gap: calc(0.75rem * var(--cis-ui-scale, 1));
+  padding: 0 calc(0.25rem * var(--cis-ui-scale, 1));
+  font-size: calc(12px * var(--cis-ui-scale, 1));
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -281,7 +281,7 @@
 
 .tab.inventory .cis-cell-inventory-scroll {
   overflow: auto;
-  padding-bottom: 0.25rem;
+  padding-bottom: calc(0.25rem * var(--cis-ui-scale, 1));
 }
 
 .tab.inventory .cis-cell-inventory-grid-stack {
@@ -291,8 +291,8 @@
 
 .tab.inventory .cis-cell-inventory-grid {
   display: grid;
-  grid-template-columns: repeat(10, 100px);
-  grid-template-rows: repeat(10, 100px);
+  grid-template-columns: repeat(10, var(--cis-cell-size, 100px));
+  grid-template-rows: repeat(10, var(--cis-cell-size, 100px));
   gap: 0;
   width: max-content;
 }
@@ -315,8 +315,8 @@
   position: relative;
   z-index: 0;
   box-sizing: border-box;
-  width: 100px;
-  height: 100px;
+  width: var(--cis-cell-size, 100px);
+  height: var(--cis-cell-size, 100px);
   border: 1px solid rgba(232, 212, 136, 0.12);
   background: rgba(17, 19, 26, 0.55);
   transition: background-color 120ms ease, box-shadow 120ms ease;
@@ -350,7 +350,7 @@
   box-sizing: border-box;
   min-width: 0;
   min-height: 0;
-  padding: 4px;
+  padding: calc(4px * var(--cis-ui-scale, 1));
   pointer-events: auto;
 }
 
@@ -366,7 +366,7 @@
   height: 100%;
   box-sizing: border-box;
   padding: 0;
-  border-radius: 8px;
+  border-radius: calc(8px * var(--cis-ui-scale, 1));
   overflow: hidden;
   border: 1px solid rgba(232, 212, 136, 0.18);
   background: linear-gradient(180deg, rgba(84, 67, 39, 0.3) 0%, rgba(29, 31, 41, 0.85) 100%);
@@ -375,7 +375,7 @@
 }
 
 .tab.inventory .cis-cell-inventory-item.equipped .cis-cell-inventory-tile {
-  outline: 3px solid #E8D488;
+  outline: calc(3px * var(--cis-ui-scale, 1)) solid #E8D488;
   box-shadow: 0 0 0 1px #E8D488 inset, 0 0 16px rgba(232, 212, 136, 0.55);
 }
 
@@ -404,25 +404,25 @@
 
 .tab.inventory .cis-cell-inventory-marker {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  top: calc(6px * var(--cis-ui-scale, 1));
+  left: calc(6px * var(--cis-ui-scale, 1));
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: calc(20px * var(--cis-ui-scale, 1));
+  height: calc(20px * var(--cis-ui-scale, 1));
   border-radius: 999px;
   background: rgba(12, 12, 15, 0.8);
   color: #E8D488;
-  font-size: 11px;
+  font-size: calc(11px * var(--cis-ui-scale, 1));
   pointer-events: none;
 }
 
 .tab.inventory .cis-cell-inventory-drag-preview {
   display: none;
   z-index: 3;
-  margin: 6px;
-  border-radius: 8px;
+  margin: calc(6px * var(--cis-ui-scale, 1));
+  border-radius: calc(8px * var(--cis-ui-scale, 1));
   border: 2px solid rgba(232, 212, 136, 0.95);
   background: rgba(232, 212, 136, 0.12);
   box-shadow: inset 0 0 0 1px rgba(255, 243, 190, 0.35);
@@ -440,8 +440,8 @@
 }
 
 .tab.inventory .cis-cell-inventory-overflow {
-  padding: 0 0.25rem;
-  font-size: 12px;
+  padding: 0 calc(0.25rem * var(--cis-ui-scale, 1));
+  font-size: calc(12px * var(--cis-ui-scale, 1));
   color: #E8D488;
   opacity: 0.85;
 }
@@ -449,7 +449,7 @@
 .tab.inventory .cis-cell-inventory-panels {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--cis-ui-scale, 1));
 }
 
 .tab.inventory .cis-cell-inventory-panel {

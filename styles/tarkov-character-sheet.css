@@ -1,5 +1,9 @@
 .app.window-app.cis-tarkov-sheet,
 .application.cis-tarkov-sheet {
+  --cis-ui-scale: 1;
+  --cis-loadout-column-width: calc(460px * var(--cis-ui-scale));
+  --cis-drag-ghost-size: calc(86px * var(--cis-ui-scale));
+  --cis-cell-size: calc(100px * var(--cis-ui-scale));
   position: fixed !important;
   inset: 0 !important;
   top: 0 !important;
@@ -79,10 +83,10 @@
   --cis-warning: #c96a39;
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--cis-ui-scale));
   height: 100%;
   min-height: 100%;
-  padding: 1rem 1.25rem;
+  padding: calc(1rem * var(--cis-ui-scale)) calc(1.25rem * var(--cis-ui-scale));
   color: var(--cis-text);
   background:
     radial-gradient(circle at top right, rgba(153, 128, 57, 0.18), transparent 32%),
@@ -94,17 +98,17 @@
 .cis-sheet-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 1rem;
+  gap: calc(1rem * var(--cis-ui-scale));
   align-items: center;
-  min-height: 2.35rem;
-  padding: 0 0 0.45rem;
+  min-height: calc(2.35rem * var(--cis-ui-scale));
+  padding: 0 0 calc(0.45rem * var(--cis-ui-scale));
   border-bottom: 1px solid rgba(228, 205, 144, 0.12);
 }
 
 .cis-sheet-toolbar-title {
   overflow: hidden;
   color: var(--cis-accent);
-  font-size: 0.78rem;
+  font-size: calc(0.78rem * var(--cis-ui-scale));
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -119,7 +123,7 @@
   align-items: center;
   justify-content: flex-end;
   justify-self: end;
-  gap: 0.4rem;
+  gap: calc(0.4rem * var(--cis-ui-scale));
   width: max-content;
   max-width: 100%;
   overflow-x: auto;
@@ -131,13 +135,13 @@
   display: inline-flex !important;
   align-items: center;
   justify-content: center;
-  flex: 0 0 2rem;
-  width: 2rem !important;
-  min-width: 2rem !important;
-  max-width: 2rem !important;
-  height: 2rem !important;
-  min-height: 2rem !important;
-  max-height: 2rem !important;
+  flex: 0 0 calc(2rem * var(--cis-ui-scale));
+  width: calc(2rem * var(--cis-ui-scale)) !important;
+  min-width: calc(2rem * var(--cis-ui-scale)) !important;
+  max-width: calc(2rem * var(--cis-ui-scale)) !important;
+  height: calc(2rem * var(--cis-ui-scale)) !important;
+  min-height: calc(2rem * var(--cis-ui-scale)) !important;
+  max-height: calc(2rem * var(--cis-ui-scale)) !important;
   padding: 0 !important;
   margin: 0 !important;
   border: 1px solid rgba(228, 205, 144, 0.22);
@@ -159,13 +163,13 @@
 
 .cis-sheet-toolbar-button i {
   margin: 0;
-  font-size: 0.9rem;
+  font-size: calc(0.9rem * var(--cis-ui-scale));
   line-height: 1;
   pointer-events: none;
 }
 
 .cis-sheet-toolbar-button span {
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--cis-ui-scale));
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -173,13 +177,13 @@
 
 .cis-tarkov-header {
   display: grid;
-  gap: 0.45rem;
+  gap: calc(0.45rem * var(--cis-ui-scale));
   align-content: start;
 }
 
 .cis-tarkov-summary {
   color: var(--cis-text-soft);
-  font-size: 0.92rem;
+  font-size: calc(0.92rem * var(--cis-ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -187,15 +191,15 @@
 .cis-tarkov-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.65rem;
+  gap: calc(0.65rem * var(--cis-ui-scale));
 }
 
 .cis-tarkov-metric {
   position: relative;
   display: grid;
-  gap: 0.18rem;
-  min-height: 70px;
-  padding: 0.65rem 0.85rem;
+  gap: calc(0.18rem * var(--cis-ui-scale));
+  min-height: calc(70px * var(--cis-ui-scale));
+  padding: calc(0.65rem * var(--cis-ui-scale)) calc(0.85rem * var(--cis-ui-scale));
   border: 1px solid var(--cis-edge);
   border-radius: 12px;
   background:
@@ -207,7 +211,7 @@
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
-  width: 3px;
+  width: calc(3px * var(--cis-ui-scale));
   border-radius: 12px 0 0 12px;
   background: var(--cis-accent);
   opacity: 0.9;
@@ -227,20 +231,20 @@
 
 .cis-tarkov-metric-label {
   color: var(--cis-text-soft);
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--cis-ui-scale));
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .cis-tarkov-metric-value {
-  font-size: 1.12rem;
+  font-size: calc(1.12rem * var(--cis-ui-scale));
   font-weight: 700;
   line-height: 1.1;
 }
 
 .cis-tarkov-metric-badge {
   color: var(--cis-accent);
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--cis-ui-scale));
 }
 
 .cis-sheet-tabs {
@@ -248,7 +252,7 @@
   flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
-  gap: 0.5rem;
+  gap: calc(0.5rem * var(--cis-ui-scale));
   padding: 0;
   border: 0;
   position: relative;
@@ -267,15 +271,15 @@
   flex: 0 0 auto;
   align-items: center;
   justify-content: flex-start;
-  min-height: 42px;
-  padding: 0 1.15rem;
+  min-height: calc(42px * var(--cis-ui-scale));
+  padding: 0 calc(1.15rem * var(--cis-ui-scale));
   border: 1px solid rgba(255, 255, 255, 0.05);
   color: var(--cis-text-soft);
   background: linear-gradient(180deg, rgba(38, 44, 55, 0.9), rgba(14, 18, 23, 0.95));
-  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 50%, calc(100% - 18px) 100%, 0 100%, 10px 50%);
+  clip-path: polygon(0 0, calc(100% - calc(18px * var(--cis-ui-scale))) 0, 100% 50%, calc(100% - calc(18px * var(--cis-ui-scale))) 100%, 0 100%, calc(10px * var(--cis-ui-scale)) 50%);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  font-size: 0.84rem;
+  font-size: calc(0.84rem * var(--cis-ui-scale));
   white-space: nowrap;
   transition: color 140ms ease, border-color 140ms ease, transform 140ms ease;
 }
@@ -306,8 +310,8 @@
 
 .cis-equipment-layout {
   display: grid;
-  grid-template-columns: 460px minmax(0, 1fr);
-  gap: 1rem;
+  grid-template-columns: var(--cis-loadout-column-width) minmax(0, 1fr);
+  gap: calc(1rem * var(--cis-ui-scale));
   height: 100%;
   min-height: 0;
 }
@@ -326,9 +330,9 @@
 .cis-loadout-pane {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--cis-ui-scale));
   min-height: 0;
-  padding: 0.65rem;
+  padding: calc(0.65rem * var(--cis-ui-scale));
   overflow: auto;
 }
 
@@ -349,7 +353,7 @@
 .cis-gear-board {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.55rem;
+  gap: calc(0.55rem * var(--cis-ui-scale));
   align-content: start;
   width: 100%;
   min-height: 0;
@@ -362,7 +366,7 @@
 .cis-gear-card-title {
   margin: 0;
   color: var(--cis-accent);
-  font-size: 0.75rem;
+  font-size: calc(0.75rem * var(--cis-ui-scale));
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -370,24 +374,24 @@
 
 .cis-gear-card {
   display: grid;
-  gap: 0.2rem;
+  gap: calc(0.2rem * var(--cis-ui-scale));
   align-content: start;
   min-height: 0;
-  padding: 0.55rem;
+  padding: calc(0.55rem * var(--cis-ui-scale));
   border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
+  border-radius: calc(12px * var(--cis-ui-scale));
   background: linear-gradient(180deg, rgba(34, 40, 51, 0.82), rgba(10, 14, 21, 0.94));
 }
 
 .cis-gear-card-body {
   display: grid;
-  gap: 0.2rem;
+  gap: calc(0.2rem * var(--cis-ui-scale));
   min-height: 0;
   align-content: start;
 }
 
 .cis-gear-card-body.is-multi {
-  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(calc(58px * var(--cis-ui-scale)), 1fr));
 }
 
 .cis-gear-card-body:not(.is-multi) {
@@ -402,9 +406,9 @@
   width: 100%;
   min-height: 0;
   aspect-ratio: 1 / 1;
-  padding: 0.28rem;
+  padding: calc(0.28rem * var(--cis-ui-scale));
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 9px;
+  border-radius: calc(9px * var(--cis-ui-scale));
   background:
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
     linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
@@ -413,7 +417,7 @@
 }
 
 .cis-gear-slot[data-item-id] {
-  padding: 0.12rem;
+  padding: calc(0.12rem * var(--cis-ui-scale));
   overflow: hidden;
 }
 
@@ -447,15 +451,15 @@
 .cis-gear-slot.is-empty::after {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: calc(6px * var(--cis-ui-scale));
   border: 1px dashed rgba(214, 194, 125, 0.16);
-  border-radius: 6px;
+  border-radius: calc(6px * var(--cis-ui-scale));
   pointer-events: none;
 }
 
 .cis-gear-slot-empty {
   color: rgba(236, 232, 218, 0.34);
-  font-size: 0.68rem;
+  font-size: calc(0.68rem * var(--cis-ui-scale));
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -465,7 +469,7 @@
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 0.18rem;
+  gap: calc(0.18rem * var(--cis-ui-scale));
   width: 100%;
 }
 
@@ -477,9 +481,9 @@
 .cis-gear-slot-item::before {
   content: "";
   position: absolute;
-  inset: -0.2rem;
+  inset: calc(-0.2rem * var(--cis-ui-scale));
   border: 1px solid color-mix(in srgb, var(--cis-slot-accent) 55%, transparent);
-  border-radius: 8px;
+  border-radius: calc(8px * var(--cis-ui-scale));
   opacity: 0.45;
   pointer-events: none;
 }
@@ -490,7 +494,7 @@
 
 .cis-gear-slot-item img {
   width: 100%;
-  max-height: 88px;
+  max-height: calc(88px * var(--cis-ui-scale));
   object-fit: contain;
   border: 0;
 }
@@ -502,32 +506,32 @@
 
 .cis-gear-slot-qty {
   position: absolute;
-  right: 0.15rem;
-  bottom: 0.15rem;
-  min-width: 1.4rem;
-  padding: 0 0.3rem;
+  right: calc(0.15rem * var(--cis-ui-scale));
+  bottom: calc(0.15rem * var(--cis-ui-scale));
+  min-width: calc(1.4rem * var(--cis-ui-scale));
+  padding: 0 calc(0.3rem * var(--cis-ui-scale));
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.72);
   color: #fff2b6;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--cis-ui-scale));
   text-align: center;
 }
 
 .cis-weapon-sets {
   display: grid;
-  gap: 0.55rem;
+  gap: calc(0.55rem * var(--cis-ui-scale));
   flex: 0 0 auto;
   margin-top: auto;
-  padding-top: 0.25rem;
+  padding-top: calc(0.25rem * var(--cis-ui-scale));
   border-top: 1px solid rgba(228, 205, 144, 0.1);
 }
 
 .cis-weapon-set {
   display: grid;
-  gap: 0.35rem;
-  padding: 0.55rem;
+  gap: calc(0.35rem * var(--cis-ui-scale));
+  padding: calc(0.55rem * var(--cis-ui-scale));
   border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 12px;
+  border-radius: calc(12px * var(--cis-ui-scale));
   background: linear-gradient(180deg, rgba(22, 28, 36, 0.88), rgba(9, 12, 18, 0.96));
 }
 
@@ -541,13 +545,13 @@
   align-items: center;
   justify-content: center;
   justify-self: start;
-  min-height: 1.8rem;
-  padding: 0 0.7rem;
+  min-height: calc(1.8rem * var(--cis-ui-scale));
+  padding: 0 calc(0.7rem * var(--cis-ui-scale));
   border: 1px solid rgba(228, 205, 144, 0.2);
   border-radius: 999px;
   background: rgba(12, 15, 21, 0.92);
   color: var(--cis-accent);
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--cis-ui-scale));
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -556,17 +560,17 @@
 .cis-weapon-set-slots {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.55rem;
+  gap: calc(0.55rem * var(--cis-ui-scale));
 }
 
 .cis-weapon-set-slot-wrap {
   display: grid;
-  gap: 0.2rem;
+  gap: calc(0.2rem * var(--cis-ui-scale));
 }
 
 .cis-weapon-set-slot-label {
   color: var(--cis-text-soft);
-  font-size: 0.64rem;
+  font-size: calc(0.64rem * var(--cis-ui-scale));
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -579,9 +583,9 @@
   width: 100%;
   min-height: 0;
   aspect-ratio: 1.8 / 1;
-  padding: 0.3rem;
+  padding: calc(0.3rem * var(--cis-ui-scale));
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  border-radius: calc(10px * var(--cis-ui-scale));
   background:
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
     linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
@@ -619,9 +623,9 @@
 .cis-weapon-slot.is-empty::after {
   content: "";
   position: absolute;
-  inset: 6px;
+  inset: calc(6px * var(--cis-ui-scale));
   border: 1px dashed rgba(214, 194, 125, 0.16);
-  border-radius: 7px;
+  border-radius: calc(7px * var(--cis-ui-scale));
   pointer-events: none;
 }
 
@@ -640,16 +644,16 @@
 .cis-weapon-slot-item::before {
   content: "";
   position: absolute;
-  inset: -0.2rem;
+  inset: calc(-0.2rem * var(--cis-ui-scale));
   border: 1px solid color-mix(in srgb, var(--cis-slot-accent) 55%, transparent);
-  border-radius: 8px;
+  border-radius: calc(8px * var(--cis-ui-scale));
   opacity: 0.45;
   pointer-events: none;
 }
 
 .cis-weapon-slot-item img {
   width: 100%;
-  max-height: 84px;
+  max-height: calc(84px * var(--cis-ui-scale));
   object-fit: contain;
   border: 0;
 }
@@ -657,7 +661,7 @@
 .cis-placeholder-panel {
   display: grid;
   align-content: start;
-  padding: 1.25rem;
+  padding: calc(1.25rem * var(--cis-ui-scale));
 }
 
 .cis-sheet-drag-ghost {
@@ -668,24 +672,24 @@
   z-index: 120;
   pointer-events: none;
   opacity: 0;
-  transform: translate(18px, 18px) scale(0.94);
+  transform: translate(calc(18px * var(--cis-ui-scale)), calc(18px * var(--cis-ui-scale))) scale(0.94);
   transition: opacity 100ms ease, transform 100ms ease;
 }
 
 .cis-sheet-drag-ghost.active {
   opacity: 1;
-  transform: translate(18px, 18px) scale(1);
+  transform: translate(calc(18px * var(--cis-ui-scale)), calc(18px * var(--cis-ui-scale))) scale(1);
 }
 
 .cis-sheet-drag-ghost-card {
   position: relative;
   display: grid;
   place-items: center;
-  width: 86px;
-  height: 86px;
-  padding: 0.3rem;
+  width: var(--cis-drag-ghost-size);
+  height: var(--cis-drag-ghost-size);
+  padding: calc(0.3rem * var(--cis-ui-scale));
   border: 1px solid color-mix(in srgb, var(--cis-drag-accent) 60%, rgba(232, 212, 136, 0.55));
-  border-radius: 12px;
+  border-radius: calc(12px * var(--cis-ui-scale));
   background:
     linear-gradient(180deg, rgba(24, 27, 35, 0.94), rgba(8, 10, 15, 0.98)),
     linear-gradient(135deg, color-mix(in srgb, var(--cis-drag-accent) 14%, transparent), transparent);
@@ -704,14 +708,14 @@
 
 .cis-sheet-drag-ghost-qty {
   position: absolute;
-  right: 0.28rem;
-  bottom: 0.28rem;
-  min-width: 1.35rem;
-  padding: 0 0.26rem;
+  right: calc(0.28rem * var(--cis-ui-scale));
+  bottom: calc(0.28rem * var(--cis-ui-scale));
+  min-width: calc(1.35rem * var(--cis-ui-scale));
+  padding: 0 calc(0.26rem * var(--cis-ui-scale));
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.76);
   color: #fff2b6;
-  font-size: 0.7rem;
+  font-size: calc(0.7rem * var(--cis-ui-scale));
   text-align: center;
 }
 
@@ -719,7 +723,7 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 0.75rem;
+  padding: calc(0.75rem * var(--cis-ui-scale));
 }
 
 .cis-inventory-pane .items-list.inventory-list {
@@ -729,17 +733,17 @@
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-toolbar {
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0 0.15rem 0.1rem;
+  gap: calc(0.75rem * var(--cis-ui-scale));
+  padding: 0 calc(0.15rem * var(--cis-ui-scale)) calc(0.1rem * var(--cis-ui-scale));
 }
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-meta {
   margin-left: auto;
   align-items: baseline;
   justify-content: flex-end;
-  gap: 0.45rem;
+  gap: calc(0.45rem * var(--cis-ui-scale));
   padding: 0;
-  font-size: 0.72rem;
+  font-size: calc(0.72rem * var(--cis-ui-scale));
   letter-spacing: 0.08em;
 }
 
@@ -763,7 +767,7 @@
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-scroll {
   overflow: auto;
-  padding-right: 0.2rem;
+  padding-right: calc(0.2rem * var(--cis-ui-scale));
 }
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-grid-stack {
@@ -773,7 +777,7 @@
 
 .cis-tarkov-shell .tab.inventory .cis-cell-inventory-panels {
   display: grid;
-  gap: 0.75rem;
+  gap: calc(0.75rem * var(--cis-ui-scale));
 }
 
 @media (max-width: 1280px) {
@@ -782,13 +786,13 @@
   }
 
   .cis-loadout-pane {
-    min-height: 420px;
+    min-height: calc(420px * var(--cis-ui-scale));
   }
 }
 
 @media (max-width: 860px) {
   .cis-tarkov-shell {
-    padding: 0.75rem;
+    padding: calc(0.75rem * var(--cis-ui-scale));
   }
 
   .cis-sheet-toolbar {
@@ -805,14 +809,14 @@
 
   .cis-sheet-tabs {
     flex-wrap: wrap;
-    gap: 0.35rem;
+    gap: calc(0.35rem * var(--cis-ui-scale));
     overflow: visible;
   }
 
   .cis-sheet-tabs .item {
-    min-height: 38px;
-    padding: 0 0.9rem;
-    font-size: 0.72rem;
+    min-height: calc(38px * var(--cis-ui-scale));
+    padding: 0 calc(0.9rem * var(--cis-ui-scale));
+    font-size: calc(0.72rem * var(--cis-ui-scale));
   }
 
   .cis-gear-board {
