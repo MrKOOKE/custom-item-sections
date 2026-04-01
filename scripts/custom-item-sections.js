@@ -5,6 +5,11 @@ const CELL_INVENTORY = Object.freeze({
   rows: 10,
   cellSize: 100
 });
+const CELL_INVENTORY_SORT_MODES = Object.freeze({
+  CATEGORY: 'category',
+  NAME_ASC: 'name-asc',
+  NAME_DESC: 'name-desc'
+});
 const FLAGS = {
   SECTION: 'section',
   NON_STACKABLE: 'nonStackable',
@@ -12,6 +17,7 @@ const FLAGS = {
   CATEGORY_MODE: 'categoryMode', // 'allow' | 'deny'
   CATEGORY_LIST: 'categoryList',
   GRID_POSITION: 'inventoryGridPosition',
+  GRID_SORT_MODE: 'cellInventorySortMode',
   GRID_SIZE_X: 'inventoryGridSizeX',
   GRID_SIZE_Y: 'inventoryGridSizeY'
 };
@@ -76,6 +82,7 @@ function hideActiveTooltip() {
 const wiredDropZones = new WeakSet();
 // Сохранённые позиции прокрутки для листов предметов (по ID предмета)
 const savedItemSheetScroll = new Map();
+const cellInventoryPositionCacheByActor = new Map();
 let activeCellInventoryDrag = null;
 let transparentDragImage = null;
 
@@ -100,6 +107,19 @@ function setActiveCellInventoryDrag(state) {
     size: sanitizeCellInventorySize(state.size),
     type: state.type ?? 'Item'
   } : null;
+}
+
+function getCellInventoryPositionCache(actorId) {
+  if (!actorId) return null;
+  if (!cellInventoryPositionCacheByActor.has(actorId)) {
+    cellInventoryPositionCacheByActor.set(actorId, new Map());
+  }
+  return cellInventoryPositionCacheByActor.get(actorId);
+}
+
+function clearCellInventoryPositionCache(actorId) {
+  if (!actorId) return;
+  cellInventoryPositionCacheByActor.delete(actorId);
 }
 
 // Инициализация модуля
@@ -815,6 +835,71 @@ function getCellInventorySize(itemLike) {
   });
 }
 
+function sanitizeCellInventorySortMode(value) {
+  switch (String(value ?? '').trim()) {
+    case CELL_INVENTORY_SORT_MODES.NAME_ASC:
+      return CELL_INVENTORY_SORT_MODES.NAME_ASC;
+    case CELL_INVENTORY_SORT_MODES.NAME_DESC:
+      return CELL_INVENTORY_SORT_MODES.NAME_DESC;
+    case CELL_INVENTORY_SORT_MODES.CATEGORY:
+    default:
+      return CELL_INVENTORY_SORT_MODES.CATEGORY;
+  }
+}
+
+function getCellInventorySortMode(actor) {
+  return sanitizeCellInventorySortMode(actor?.getFlag?.(MODULE_ID, FLAGS.GRID_SORT_MODE));
+}
+
+function getCellInventorySectionName(itemLike) {
+  if (typeof itemLike?.getFlag === 'function') {
+    return String(itemLike.getFlag(MODULE_ID, FLAGS.SECTION) ?? '').trim();
+  }
+  return String(foundry.utils.getProperty(itemLike, `flags.${MODULE_ID}.${FLAGS.SECTION}`) ?? '').trim();
+}
+
+function compareCellInventoryStrings(left, right) {
+  return String(left ?? '').localeCompare(String(right ?? ''), game.i18n.lang, {
+    sensitivity: 'base',
+    numeric: true
+  });
+}
+
+function compareCellInventoryItems(left, right, sortMode = CELL_INVENTORY_SORT_MODES.CATEGORY) {
+  const normalizedMode = sanitizeCellInventorySortMode(sortMode);
+  const leftSection = getCellInventorySectionName(left);
+  const rightSection = getCellInventorySectionName(right);
+  const leftName = String(left?.name ?? '');
+  const rightName = String(right?.name ?? '');
+
+  if (normalizedMode === CELL_INVENTORY_SORT_MODES.CATEGORY) {
+    const emptyDiff = Number(!leftSection) - Number(!rightSection);
+    if (emptyDiff) return emptyDiff;
+
+    const sectionDiff = compareCellInventoryStrings(leftSection, rightSection);
+    if (sectionDiff) return sectionDiff;
+
+    const nameDiff = compareCellInventoryStrings(leftName, rightName);
+    if (nameDiff) return nameDiff;
+  } else {
+    const nameDiff = compareCellInventoryStrings(leftName, rightName);
+    if (nameDiff) {
+      return normalizedMode === CELL_INVENTORY_SORT_MODES.NAME_DESC ? -nameDiff : nameDiff;
+    }
+
+    const sectionDiff = compareCellInventoryStrings(leftSection, rightSection);
+    if (sectionDiff) return sectionDiff;
+  }
+
+  const leftSize = getCellInventorySize(left);
+  const rightSize = getCellInventorySize(right);
+  const areaDiff = (rightSize.width * rightSize.height) - (leftSize.width * leftSize.height);
+  if (areaDiff) return areaDiff;
+
+  return ((left?.sort ?? 0) - (right?.sort ?? 0))
+    || compareCellInventoryStrings(left?.id, right?.id);
+}
+
 function isCellInventoryPositionWithinBounds(position, size = { width: 1, height: 1 }) {
   const x = Number(position?.x);
   const y = Number(position?.y);
@@ -917,10 +1002,14 @@ function setCellInventoryDragTarget(root, position, size, isValid = true) {
   }
 }
 
-function getStoredCellInventoryPosition(item) {
+function getStoredCellInventoryPosition(item, actorId = null) {
   const size = getCellInventorySize(item);
   const position = item.getFlag?.(MODULE_ID, FLAGS.GRID_POSITION);
-  return sanitizeCellInventoryPosition(position, size);
+  const storedPosition = sanitizeCellInventoryPosition(position, size);
+  if (storedPosition) return storedPosition;
+
+  const cachedPosition = getCellInventoryPositionCache(actorId)?.get(item.id);
+  return sanitizeCellInventoryPosition(cachedPosition, size);
 }
 
 function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, height: 1 }) {
@@ -936,20 +1025,21 @@ function findNextFreeCellInventoryPosition(occupiedCells, size = { width: 1, hei
   return null;
 }
 
-function buildCellInventoryLayout(items) {
+function buildCellInventoryLayout(items, {
+  sortMode = CELL_INVENTORY_SORT_MODES.CATEGORY,
+  actorId = null
+} = {}) {
   const sortedItems = [...items].sort((left, right) => {
-    const leftPosition = getStoredCellInventoryPosition(left);
-    const rightPosition = getStoredCellInventoryPosition(right);
+    const leftPosition = getStoredCellInventoryPosition(left, actorId);
+    const rightPosition = getStoredCellInventoryPosition(right, actorId);
     if (leftPosition && rightPosition) {
       return (leftPosition.y - rightPosition.y)
         || (leftPosition.x - rightPosition.x)
-        || ((left.sort ?? 0) - (right.sort ?? 0))
-        || left.name.localeCompare(right.name, game.i18n.lang);
+        || compareCellInventoryItems(left, right, sortMode);
     }
     if (leftPosition) return -1;
     if (rightPosition) return 1;
-    return ((left.sort ?? 0) - (right.sort ?? 0))
-      || left.name.localeCompare(right.name, game.i18n.lang);
+    return compareCellInventoryItems(left, right, sortMode);
   });
 
   const placements = new Map();
@@ -959,7 +1049,7 @@ function buildCellInventoryLayout(items) {
 
   for (const item of sortedItems) {
     const size = getCellInventorySize(item);
-    const position = getStoredCellInventoryPosition(item);
+    const position = getStoredCellInventoryPosition(item, actorId);
     if (!position) {
       pendingItems.push(item);
       continue;
@@ -972,14 +1062,7 @@ function buildCellInventoryLayout(items) {
     markCellInventoryArea(occupiedCells, item, position, size);
   }
 
-  pendingItems.sort((left, right) => {
-    const leftSize = getCellInventorySize(left);
-    const rightSize = getCellInventorySize(right);
-    const areaDiff = (rightSize.width * rightSize.height) - (leftSize.width * leftSize.height);
-    if (areaDiff) return areaDiff;
-    return ((left.sort ?? 0) - (right.sort ?? 0))
-      || left.name.localeCompare(right.name, game.i18n.lang);
-  });
+  pendingItems.sort((left, right) => compareCellInventoryItems(left, right, sortMode));
 
   for (const item of pendingItems) {
     const size = getCellInventorySize(item);
@@ -997,8 +1080,19 @@ function buildCellInventoryLayout(items) {
 
 function collectCellInventoryLayoutState(actor) {
   const items = getCellInventoryRootItems(actor);
-  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items);
-  return { items, placements, occupiedCells, overflow };
+  const sortMode = getCellInventorySortMode(actor);
+  const { placements, occupiedCells, overflow } = buildCellInventoryLayout(items, {
+    sortMode,
+    actorId: actor?.id ?? null
+  });
+  const positionCache = new Map();
+  for (const item of items) {
+    const placement = placements.get(item.id);
+    if (!placement?.position) continue;
+    positionCache.set(item.id, foundry.utils.deepClone(placement.position));
+  }
+  if (actor?.id) cellInventoryPositionCacheByActor.set(actor.id, positionCache);
+  return { items, placements, occupiedCells, overflow, sortMode };
 }
 
 function getCellInventoryPlacementState(layoutState, position, size, ignoredIds = new Set()) {
@@ -1039,6 +1133,57 @@ function getCellInventoryDragState(app, nativeEvent, { readDropData = false } = 
   return { dropData, dragSize, ignoredIds };
 }
 
+function createCellInventorySortControls(sortMode) {
+  const normalizedMode = sanitizeCellInventorySortMode(sortMode);
+  const sortLabel = escapeHtml(localizeSafe('CUSTOM_SECTIONS.CellInventory.Sort.Label', 'Сортировка'));
+  const options = [
+    {
+      mode: CELL_INVENTORY_SORT_MODES.CATEGORY,
+      label: localizeSafe('CUSTOM_SECTIONS.CellInventory.Sort.Category', 'По категориям')
+    },
+    {
+      mode: CELL_INVENTORY_SORT_MODES.NAME_ASC,
+      label: localizeSafe('CUSTOM_SECTIONS.CellInventory.Sort.NameAsc', 'А-Я')
+    },
+    {
+      mode: CELL_INVENTORY_SORT_MODES.NAME_DESC,
+      label: localizeSafe('CUSTOM_SECTIONS.CellInventory.Sort.NameDesc', 'Я-А')
+    }
+  ];
+
+  return `
+    <div class="cis-cell-inventory-toolbar">
+      <details class="cis-cell-inventory-sort-menu">
+        <summary class="cis-cell-inventory-sort-button" title="${sortLabel}" aria-label="${sortLabel}">
+          <i class="fa-solid fa-arrow-down-wide-short" aria-hidden="true"></i>
+        </summary>
+        <div class="cis-cell-inventory-sort-dropdown">
+          ${options.map(option => `
+            <button
+              type="button"
+              class="cis-cell-inventory-sort-option${option.mode === normalizedMode ? ' active' : ''}"
+              data-sort-mode="${option.mode}"
+            >${escapeHtml(option.label)}</button>
+          `).join('')}
+        </div>
+      </details>
+    </div>
+  `;
+}
+
+async function applyCellInventorySortMode(app, mode) {
+  const sortMode = sanitizeCellInventorySortMode(mode);
+  const rootItems = getCellInventoryRootItems(app.actor);
+  clearCellInventoryPositionCache(app.actor.id);
+  await app.actor.setFlag(MODULE_ID, FLAGS.GRID_SORT_MODE, sortMode);
+  if (!rootItems.length) return;
+
+  await app.actor.updateEmbeddedDocuments('Item', rootItems.map(item => ({
+    _id: item.id,
+    [`flags.${MODULE_ID}.${FLAGS.GRID_POSITION}`]: null
+  })));
+}
+
 function createCellInventoryItemHtml(item, placement) {
   const name = escapeHtml(item.name);
   const image = escapeHtml(item.img || '');
@@ -1072,7 +1217,8 @@ function createCellInventoryHtml(app, layoutState = null) {
     items,
     placements,
     occupiedCells,
-    overflow
+    overflow,
+    sortMode
   } = layoutState ?? collectCellInventoryLayoutState(app.actor);
   const cells = [];
   const renderedItems = [];
@@ -1109,6 +1255,7 @@ function createCellInventoryHtml(app, layoutState = null) {
 
   return `
     <div class="cis-cell-inventory-shell">
+      ${createCellInventorySortControls(sortMode)}
       <div class="cis-cell-inventory-scroll">
         <div class="cis-cell-inventory-grid-stack">
           <div class="cis-cell-inventory-grid cis-cell-inventory-cells">
@@ -1176,7 +1323,7 @@ async function moveRootInventoryItemToCell(app, item, position) {
   const rootItems = getCellInventoryRootItems(app.actor);
   if (!rootItems.some(rootItem => rootItem.id === item.id)) return false;
 
-  const storedPosition = getStoredCellInventoryPosition(item);
+  const storedPosition = getStoredCellInventoryPosition(item, app.actor.id);
   if (storedPosition && getCellInventoryPositionKey(storedPosition) === getCellInventoryPositionKey(normalized)) return true;
 
   const layoutState = collectCellInventoryLayoutState(app.actor);
@@ -1303,6 +1450,15 @@ function applyCellInventory(app, html) {
   });
 
   host.off('.cis-cell-inventory');
+
+  host.on('click.cis-cell-inventory', '.cis-cell-inventory-sort-option', async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const sortMode = event.currentTarget.dataset.sortMode;
+    const menu = event.currentTarget.closest('.cis-cell-inventory-sort-menu');
+    if (menu) menu.open = false;
+    await applyCellInventorySortMode(app, sortMode);
+  });
 
   host.on('click.cis-cell-inventory', '.cis-cell-inventory-item .cis-cell-inventory-tile', async (event) => {
     const itemElement = event.currentTarget.closest('.cis-cell-inventory-item');
