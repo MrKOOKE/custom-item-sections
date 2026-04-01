@@ -1133,7 +1133,21 @@ function getCellInventoryDragState(app, nativeEvent, { readDropData = false } = 
   return { dropData, dragSize, ignoredIds };
 }
 
-function createCellInventorySortControls(sortMode) {
+function getCellInventoryToolbarMeta(app) {
+  try {
+    if (typeof app?.getCellInventoryToolbarMeta !== 'function') return null;
+    const meta = app.getCellInventoryToolbarMeta();
+    if (!meta || (!meta.label && !meta.value)) return null;
+    return {
+      label: escapeHtml(String(meta.label || '')),
+      value: escapeHtml(String(meta.value || ''))
+    };
+  } catch (_) {
+    return null;
+  }
+}
+
+function createCellInventorySortControls(sortMode, toolbarMeta = null) {
   const normalizedMode = sanitizeCellInventorySortMode(sortMode);
   const sortLabel = escapeHtml(localizeSafe('CUSTOM_SECTIONS.CellInventory.Sort.Label', 'Сортировка'));
   const options = [
@@ -1167,6 +1181,12 @@ function createCellInventorySortControls(sortMode) {
           `).join('')}
         </div>
       </details>
+      ${toolbarMeta ? `
+        <div class="cis-cell-inventory-meta">
+          <span class="cis-cell-inventory-label">${toolbarMeta.label}</span>
+          <span class="cis-cell-inventory-value">${toolbarMeta.value}</span>
+        </div>
+      ` : ''}
     </div>
   `;
 }
@@ -1220,6 +1240,7 @@ function createCellInventoryHtml(app, layoutState = null) {
     overflow,
     sortMode
   } = layoutState ?? collectCellInventoryLayoutState(app.actor);
+  const toolbarMeta = getCellInventoryToolbarMeta(app);
   const cells = [];
   const renderedItems = [];
 
@@ -1255,7 +1276,7 @@ function createCellInventoryHtml(app, layoutState = null) {
 
   return `
     <div class="cis-cell-inventory-shell">
-      ${createCellInventorySortControls(sortMode)}
+      ${createCellInventorySortControls(sortMode, toolbarMeta)}
       <div class="cis-cell-inventory-scroll">
         <div class="cis-cell-inventory-grid-stack">
           <div class="cis-cell-inventory-grid cis-cell-inventory-cells">

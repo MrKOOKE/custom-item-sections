@@ -52,9 +52,7 @@ const SLOT_ORDER = Object.freeze([
   "Пояс",
   "Рюкзак",
   "Наколенники",
-  "Ботинки",
-  "Левая рука",
-  "Правая рука"
+  "Ботинки"
 ]);
 
 function getArmorHandler() {
@@ -95,35 +93,9 @@ function formatMetricValue(value, digits = 0) {
   return digits > 0 ? numeric.toFixed(digits) : `${Math.round(numeric)}`;
 }
 
-function buildMetrics(actor) {
-  const hp = actor.system?.attributes?.hp ?? {};
-  const ac = actor.system?.attributes?.ac ?? {};
+function buildEncumbranceValue(actor) {
   const encumbrance = actor.system?.attributes?.encumbrance ?? {};
-  const effects = actor.effects?.filter((effect) => !effect.disabled) ?? [];
-  const metricWeightUnits = game.settings.get("dnd5e", "metricWeightUnits");
-  const weightUnit = metricWeightUnits ? "кг" : "lb";
-
-  return [
-    {
-      id: "hp",
-      label: "Хиты",
-      value: `${formatMetricValue(hp.value)} / ${formatMetricValue(hp.max)}`,
-      accent: "health"
-    },
-    {
-      id: "ac",
-      label: "Броня",
-      value: formatMetricValue(ac.value ?? 0),
-      accent: "armor"
-    },
-    {
-      id: "weight",
-      label: "Нагрузка",
-      value: `${formatMetricValue(encumbrance.value, 1)} / ${formatMetricValue(encumbrance.max, 1)} ${weightUnit}`,
-      accent: "weight",
-      badge: effects.length ? `${effects.length} эффект.` : ""
-    }
-  ];
+  return `${formatMetricValue(encumbrance.value, 1)} / ${formatMetricValue(encumbrance.max, 1)} Фунты`;
 }
 
 function getItemColor(item) {
@@ -186,12 +158,76 @@ function buildGearSlots(actor) {
       label: areaName,
       coverageArea: areaName,
       slots,
-      isHand: areaName === "Левая рука" || areaName === "Правая рука",
       isLarge: areaName === "Броня" || areaName === "Разгрузка" || areaName === "Рюкзак",
       multiSlot: capacity > 1
     });
     return result;
   }, []);
+}
+
+async function syncWeaponSets(actor) {
+  const handler = getArmorHandler();
+  if (!handler?._syncEchWeaponSetsForActor) return;
+  try {
+    await handler._syncEchWeaponSetsForActor(actor);
+  } catch (_) {
+    // Ignore sync failures and render current flags.
+  }
+}
+
+function buildWeaponSets(actor) {
+  const defaults = {
+    1: { primary: null },
+    2: { primary: null },
+    3: { primary: null },
+    4: { primary: null }
+  };
+
+  const raw = foundry.utils.deepClone(actor.getFlag("enhancedcombathud", "weaponSets") || {});
+  const sets = foundry.utils.mergeObject(defaults, raw, { inplace: false, overwrite: true });
+  const activeSet = String(actor.getFlag("enhancedcombathud", "activeWeaponSet") || "1");
+  const activePair = (activeSet === "1" || activeSet === "2") ? "12" : "34";
+
+  const getItemByUuid = (uuid) => actor.items.find((item) => item.uuid === uuid) ?? null;
+  const makeSlot = (setKey, handLabel) => {
+    const entry = sets?.[setKey] || {};
+    const item = getItemByUuid(entry.primary || null);
+    const quantity = Number(item?.system?.quantity ?? 1);
+
+    return {
+      setKey: String(setKey),
+      handLabel,
+      itemName: item?.name ?? handLabel,
+      itemImage: item?.img ?? "",
+      itemColor: item ? getItemColor(item) : "",
+      itemQuantity: quantity > 1 ? quantity : null,
+      phantom: !!entry._phantom,
+      empty: !item
+    };
+  };
+
+  return [
+    {
+      pair: "12",
+      label: "Набор 1",
+      activateSet: "1",
+      active: activePair === "12",
+      slots: [
+        makeSlot("2", "Левая рука"),
+        makeSlot("1", "Правая рука")
+      ]
+    },
+    {
+      pair: "34",
+      label: "Набор 2",
+      activateSet: "3",
+      active: activePair === "34",
+      slots: [
+        makeSlot("4", "Левая рука"),
+        makeSlot("3", "Правая рука")
+      ]
+    }
+  ];
 }
 
 function getDropData(event) {
@@ -247,6 +283,19 @@ function createPaperDollAdapter(sheet) {
   adapter._showCustomItemSelectionDialog = (...args) => proto._showCustomItemSelectionDialog.call(adapter, ...args);
   adapter._equipWeapon = (...args) => proto._equipWeapon.call(adapter, ...args);
   adapter.equipItemWithCoverage = (...args) => proto.equipItemWithCoverage.call(adapter, ...args);
+  adapter._echDefaultSets = (...args) => proto._echDefaultSets.call(adapter, ...args);
+  adapter._echGetPairKeysForSet = (...args) => proto._echGetPairKeysForSet.call(adapter, ...args);
+  adapter._echOtherPair = (...args) => proto._echOtherPair.call(adapter, ...args);
+  adapter._echGetActiveSet = (...args) => proto._echGetActiveSet.call(adapter, ...args);
+  adapter._echEquipPairForSet = (...args) => proto._echEquipPairForSet.call(adapter, ...args);
+  adapter._echSetActive = (...args) => proto._echSetActive.call(adapter, ...args);
+  adapter._echAssignWeaponToSet = (...args) => proto._echAssignWeaponToSet.call(adapter, ...args);
+  adapter._echClearSet = (...args) => proto._echClearSet.call(adapter, ...args);
+  adapter._onEchActivateClick = (...args) => proto._onEchActivateClick.call(adapter, ...args);
+  adapter._onEchClick = (...args) => proto._onEchClick.call(adapter, ...args);
+  adapter._onEchContextMenu = (...args) => proto._onEchContextMenu.call(adapter, ...args);
+  adapter._onEchDragStart = (...args) => proto._onEchDragStart.call(adapter, ...args);
+  adapter._onEchDrop = (...args) => proto._onEchDrop.call(adapter, ...args);
 
   return adapter;
 }
@@ -344,24 +393,29 @@ Hooks.once("init", () => {
     }
 
     async getData(options = {}) {
+      await syncWeaponSets(this.actor);
       const context = await super.getData(options);
-      const classLabel = context.classLabels || context.labels?.class || context.labels?.type || "";
-      const typeLabel = context.labels?.type || "";
-      const summary = [classLabel, typeLabel].filter(Boolean).join(" / ");
 
       return foundry.utils.mergeObject(context, {
         tabs: buildTabs(),
         headerButtons: buildHeaderButtons(this),
         gearSlots: buildGearSlots(this.actor),
-        metrics: buildMetrics(this.actor),
-        summary: summary || "Персонаж"
+        weaponSets: buildWeaponSets(this.actor)
       });
+    }
+
+    getCellInventoryToolbarMeta() {
+      return {
+        label: "Нагрузка",
+        value: buildEncumbranceValue(this.actor)
+      };
     }
 
     activateListeners(html) {
       super.activateListeners(html);
       applyCellInventory(this, html);
       this.#activateGearSlots(html);
+      this.#activateWeaponSets(html);
 
       html.find('[data-action="header-button"]').on("click", (event) => {
         event.preventDefault();
@@ -416,6 +470,56 @@ Hooks.once("init", () => {
             targetSlotIndex: Number(slotElement.dataset.index ?? 0)
           });
           this.render(false);
+        });
+      });
+    }
+
+    #activateWeaponSets(html) {
+      const root = html?.[0] ?? html;
+      if (!root) return;
+
+      const proto = getPaperDollProto();
+      const adapter = createPaperDollAdapter(this);
+      if (!proto || !adapter) return;
+
+      root.querySelectorAll("[data-action='ech-activate']").forEach((element) => {
+        element.addEventListener("click", async (event) => {
+          adapter.render = () => this.render(false);
+          await proto._onEchActivateClick.call(adapter, event);
+        });
+      });
+
+      root.querySelectorAll(".cis-weapon-slot").forEach((slotElement) => {
+        slotElement.addEventListener("click", async (event) => {
+          adapter.render = () => this.render(false);
+          await proto._onEchClick.call(adapter, event);
+        });
+
+        slotElement.addEventListener("contextmenu", async (event) => {
+          adapter.render = () => this.render(false);
+          await proto._onEchContextMenu.call(adapter, event);
+        });
+
+        slotElement.addEventListener("dragstart", (event) => {
+          adapter.render = () => this.render(false);
+          proto._onEchDragStart.call(adapter, event);
+        });
+
+        slotElement.addEventListener("dragover", (event) => {
+          const dropData = getDropData(event);
+          if (!dropData || dropData.type !== "Item") return;
+          event.preventDefault();
+          slotElement.classList.add("drag-over");
+        });
+
+        slotElement.addEventListener("dragleave", () => {
+          slotElement.classList.remove("drag-over");
+        });
+
+        slotElement.addEventListener("drop", async (event) => {
+          slotElement.classList.remove("drag-over");
+          adapter.render = () => this.render(false);
+          await proto._onEchDrop.call(adapter, event);
         });
       });
     }

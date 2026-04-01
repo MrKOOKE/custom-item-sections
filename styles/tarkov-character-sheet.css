@@ -79,10 +79,10 @@
   --cis-warning: #c96a39;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.75rem;
   height: 100%;
   min-height: 100%;
-  padding: 1.25rem 1.5rem;
+  padding: 1rem 1.25rem;
   color: var(--cis-text);
   background:
     radial-gradient(circle at top right, rgba(153, 128, 57, 0.18), transparent 32%),
@@ -96,15 +96,15 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 1rem;
   align-items: center;
-  min-height: 3rem;
-  padding: 0.35rem 0 0.65rem;
+  min-height: 2.35rem;
+  padding: 0 0 0.45rem;
   border-bottom: 1px solid rgba(228, 205, 144, 0.12);
 }
 
 .cis-sheet-toolbar-title {
   overflow: hidden;
   color: var(--cis-accent);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -171,106 +171,31 @@
   text-transform: uppercase;
 }
 
-.cis-tarkov-shell input,
-.cis-tarkov-shell button,
-.cis-tarkov-shell select,
-.cis-tarkov-shell textarea {
-  font-family: inherit;
-}
-
 .cis-tarkov-header {
   display: grid;
-  grid-template-columns: 124px minmax(0, 1fr);
-  gap: 1rem;
-  align-items: stretch;
-}
-
-.cis-tarkov-portrait-frame {
-  position: relative;
-  overflow: hidden;
-  border: 1px solid var(--cis-edge);
-  border-radius: 14px;
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.04), transparent 55%),
-    linear-gradient(180deg, rgba(27, 32, 41, 0.98), rgba(8, 10, 15, 0.98));
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.03), 0 18px 34px rgba(0, 0, 0, 0.35);
-}
-
-.cis-tarkov-portrait-frame::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.45) 100%),
-    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 4px, transparent 4px 8px);
-  pointer-events: none;
-}
-
-.cis-tarkov-portrait-frame img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border: 0;
-}
-
-.cis-tarkov-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 0.85rem;
-  min-width: 0;
-}
-
-.cis-tarkov-nameplate {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.cis-tarkov-label {
-  color: var(--cis-accent);
-  font-size: 0.72rem;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.cis-tarkov-name {
-  height: auto;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid var(--cis-edge);
-  border-radius: 0;
-  background: transparent;
-  color: var(--cis-text);
-  font-size: clamp(1.6rem, 2.6vw, 2.4rem);
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  box-shadow: none;
-}
-
-.cis-tarkov-name:focus {
-  border-color: var(--cis-edge-strong);
-  box-shadow: none;
+  gap: 0.45rem;
+  align-content: start;
 }
 
 .cis-tarkov-summary {
   color: var(--cis-text-soft);
-  font-size: 0.95rem;
-  letter-spacing: 0.05em;
+  font-size: 0.92rem;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
 .cis-tarkov-metrics {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.85rem;
+  gap: 0.65rem;
 }
 
 .cis-tarkov-metric {
   position: relative;
   display: grid;
-  gap: 0.28rem;
-  min-height: 86px;
-  padding: 0.9rem 1rem;
+  gap: 0.18rem;
+  min-height: 70px;
+  padding: 0.65rem 0.85rem;
   border: 1px solid var(--cis-edge);
   border-radius: 12px;
   background:
@@ -302,20 +227,20 @@
 
 .cis-tarkov-metric-label {
   color: var(--cis-text-soft);
-  font-size: 0.76rem;
+  font-size: 0.7rem;
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .cis-tarkov-metric-value {
-  font-size: 1.28rem;
+  font-size: 1.12rem;
   font-weight: 700;
   line-height: 1.1;
 }
 
 .cis-tarkov-metric-badge {
   color: var(--cis-accent);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
 }
 
 .cis-sheet-tabs {
@@ -373,7 +298,7 @@
 
 .cis-equipment-layout {
   display: grid;
-  grid-template-columns: minmax(420px, 0.95fr) minmax(500px, 1.05fr);
+  grid-template-columns: 460px minmax(0, 1fr);
   gap: 1rem;
   height: 100%;
   min-height: 0;
@@ -392,19 +317,22 @@
 
 .cis-loadout-pane {
   display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
   min-height: 0;
-  padding: 1rem;
+  padding: 0.65rem;
+  overflow: auto;
 }
 
 .cis-gear-board {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
   align-content: start;
   width: 100%;
   min-height: 0;
-  overflow: auto;
-  padding-right: 0.25rem;
+  flex: 0 0 auto;
+  overflow: visible;
 }
 
 .cis-panel-header h2,
@@ -412,40 +340,36 @@
 .cis-gear-card-title {
   margin: 0;
   color: var(--cis-accent);
-  font-size: 0.9rem;
+  font-size: 0.75rem;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
 }
 
 .cis-gear-card {
   display: grid;
-  gap: 0.5rem;
-  min-height: 170px;
-  padding: 0.8rem;
+  gap: 0.2rem;
+  align-content: start;
+  min-height: 0;
+  padding: 0.55rem;
   border: 1px solid rgba(255, 255, 255, 0.04);
-  border-radius: 14px;
+  border-radius: 12px;
   background: linear-gradient(180deg, rgba(34, 40, 51, 0.82), rgba(10, 14, 21, 0.94));
-}
-
-.cis-gear-card.is-large,
-.cis-gear-card.is-hand {
-  min-height: 212px;
 }
 
 .cis-gear-card-body {
   display: grid;
-  gap: 0.45rem;
+  gap: 0.2rem;
   min-height: 0;
-  align-content: stretch;
+  align-content: start;
 }
 
 .cis-gear-card-body.is-multi {
-  grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
 }
 
 .cis-gear-card-body:not(.is-multi) {
-  grid-auto-rows: 1fr;
+  grid-auto-rows: auto;
 }
 
 .cis-gear-slot {
@@ -453,10 +377,12 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 112px;
-  padding: 0.45rem;
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 1 / 1;
+  padding: 0.28rem;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 10px;
+  border-radius: 9px;
   background:
     repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
     linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
@@ -477,16 +403,16 @@
 .cis-gear-slot.is-empty::after {
   content: "";
   position: absolute;
-  inset: 8px;
+  inset: 6px;
   border: 1px dashed rgba(214, 194, 125, 0.16);
-  border-radius: 7px;
+  border-radius: 6px;
   pointer-events: none;
 }
 
 .cis-gear-slot-empty {
   color: rgba(236, 232, 218, 0.34);
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
@@ -495,7 +421,7 @@
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 0.38rem;
+  gap: 0.18rem;
   width: 100%;
 }
 
@@ -511,21 +437,9 @@
 
 .cis-gear-slot-item img {
   width: 100%;
-  max-height: 74px;
+  max-height: 88px;
   object-fit: contain;
   border: 0;
-}
-
-.cis-gear-slot-name {
-  display: -webkit-box;
-  overflow: hidden;
-  color: var(--cis-text);
-  font-size: 0.78rem;
-  line-height: 1.2;
-  text-align: center;
-  text-overflow: ellipsis;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .cis-gear-slot-qty {
@@ -541,6 +455,130 @@
   text-align: center;
 }
 
+.cis-weapon-sets {
+  display: grid;
+  gap: 0.55rem;
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding-top: 0.25rem;
+  border-top: 1px solid rgba(228, 205, 144, 0.1);
+}
+
+.cis-weapon-set {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(22, 28, 36, 0.88), rgba(9, 12, 18, 0.96));
+}
+
+.cis-weapon-set.is-active {
+  border-color: rgba(228, 205, 144, 0.42);
+  box-shadow: inset 0 0 0 1px rgba(228, 205, 144, 0.12);
+}
+
+.cis-weapon-set-heading {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  justify-self: start;
+  min-height: 1.8rem;
+  padding: 0 0.7rem;
+  border: 1px solid rgba(228, 205, 144, 0.2);
+  border-radius: 999px;
+  background: rgba(12, 15, 21, 0.92);
+  color: var(--cis-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cis-weapon-set-slots {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.cis-weapon-set-slot-wrap {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.cis-weapon-set-slot-label {
+  color: var(--cis-text-soft);
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.cis-weapon-slot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 0;
+  aspect-ratio: 1.8 / 1;
+  padding: 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  background:
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
+    linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+
+.cis-weapon-slot:hover {
+  border-color: var(--cis-edge-strong);
+  transform: translateY(-1px);
+}
+
+.cis-weapon-slot.drag-over {
+  border-color: var(--cis-warning);
+  box-shadow: 0 0 0 1px rgba(201, 106, 57, 0.28), 0 0 14px rgba(201, 106, 57, 0.25);
+}
+
+.cis-weapon-slot.is-empty::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border: 1px dashed rgba(214, 194, 125, 0.16);
+  border-radius: 7px;
+  pointer-events: none;
+}
+
+.cis-weapon-slot.is-phantom {
+  opacity: 0.72;
+}
+
+.cis-weapon-slot-item {
+  --cis-slot-accent: var(--cis-accent);
+  position: relative;
+  display: grid;
+  justify-items: center;
+  width: 100%;
+}
+
+.cis-weapon-slot-item::before {
+  content: "";
+  position: absolute;
+  inset: -0.2rem;
+  border: 1px solid color-mix(in srgb, var(--cis-slot-accent) 55%, transparent);
+  border-radius: 8px;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.cis-weapon-slot-item img {
+  width: 100%;
+  max-height: 84px;
+  object-fit: contain;
+  border: 0;
+}
+
 .cis-placeholder-panel {
   display: grid;
   align-content: start;
@@ -551,17 +589,38 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 1rem;
-}
-
-.cis-panel-header {
-  display: flex;
-  margin-bottom: 0.85rem;
+  padding: 0.75rem;
 }
 
 .cis-inventory-pane .items-list.inventory-list {
   flex: 1;
   min-height: 0;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-toolbar {
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.15rem 0.1rem;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-meta {
+  margin-left: auto;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  padding: 0;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-label {
+  color: var(--cis-accent);
+  font-weight: 700;
+}
+
+.cis-tarkov-shell .tab.inventory .cis-cell-inventory-value {
+  color: var(--cis-text);
+  font-weight: 700;
 }
 
 .cis-tarkov-shell .tab.inventory.cis-cell-inventory-mode {
@@ -610,10 +669,6 @@
     justify-content: flex-start;
   }
 
-  .cis-tarkov-header {
-    grid-template-columns: 88px minmax(0, 1fr);
-  }
-
   .cis-tarkov-metrics {
     grid-template-columns: 1fr;
   }
@@ -629,6 +684,6 @@
   }
 
   .cis-gear-board {
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
