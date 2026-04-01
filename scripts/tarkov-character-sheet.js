@@ -41,16 +41,15 @@ const SLOT_ORDER = Object.freeze([
   "Шлем",
   "Очки",
   "Маска",
-  "Украшения",
+  "Одежда",
+  "Броня",
+  "Разгрузка",
+  "Рюкзак",
   "Наплечники",
   "Нарукавники",
   "Перчатки",
-  "Одежда",
-  "Броня",
   "Жилет",
-  "Разгрузка",
   "Пояс",
-  "Рюкзак",
   "Наколенники",
   "Ботинки"
 ]);
@@ -262,6 +261,86 @@ async function resolveDroppedActorItem(sheet, dropData) {
   }
 }
 
+function getDraggedWeaponSetItem(sheet, setKey) {
+  const sets = sheet.actor.getFlag("enhancedcombathud", "weaponSets") || {};
+  const uuid = sets?.[String(setKey)]?.primary || null;
+  if (!uuid) return null;
+  return sheet.actor.items.find((item) => item.uuid === uuid) ?? null;
+}
+
+function getDraggedGearSlotItem(sheet, slotElement) {
+  const area = slotElement?.dataset?.slotArea || slotElement?.dataset?.id;
+  const index = Number(slotElement?.dataset?.slotIndex ?? slotElement?.dataset?.index ?? 0);
+  if (!area || Number.isNaN(index)) return null;
+  const slotData = getEquippedItemsData(sheet.actor)?.[area]?.[index] ?? null;
+  return slotData?.item ?? null;
+}
+
+function resolveDraggedSheetItem(sheet, event) {
+  const source = event?.target instanceof HTMLElement ? event.target : event?.currentTarget;
+  if (!(source instanceof HTMLElement)) return null;
+
+  const dragElement = source.closest(".cis-cell-inventory-item, .cis-weapon-slot, .cis-gear-slot");
+  if (!(dragElement instanceof HTMLElement)) return null;
+
+  if (dragElement.classList.contains("cis-cell-inventory-item")) {
+    return sheet.actor.items.get(dragElement.dataset.itemId) ?? null;
+  }
+
+  if (dragElement.classList.contains("cis-weapon-slot")) {
+    return getDraggedWeaponSetItem(sheet, dragElement.dataset.echSet);
+  }
+
+  if (dragElement.classList.contains("cis-gear-slot")) {
+    return getDraggedGearSlotItem(sheet, dragElement);
+  }
+
+  return null;
+}
+
+function clearCompatibleSlotHighlights(root) {
+  if (!root) return;
+  root.querySelectorAll(".cis-slot-compatible").forEach((element) => {
+    element.classList.remove("cis-slot-compatible");
+  });
+}
+
+function applyCompatibleSlotHighlights(root, sheet, item) {
+  clearCompatibleSlotHighlights(root);
+  if (!root || !item) return;
+  const adapter = createPaperDollAdapter(sheet);
+  if (!adapter?.filterItems) return;
+
+  root.querySelectorAll(".cis-gear-slot").forEach((slotElement) => {
+    const area = slotElement.dataset.slotArea || slotElement.dataset.id;
+    const slotIndex = Number(slotElement.dataset.slotIndex ?? slotElement.dataset.index ?? 0);
+    if (!area || Number.isNaN(slotIndex)) return;
+
+    try {
+      const compatible = adapter.filterItems([item], area, slotIndex);
+      if (compatible?.length) slotElement.classList.add("cis-slot-compatible");
+    } catch (_) {
+      // Ignore compatibility failures for individual slots.
+    }
+  });
+
+  let canUseWeaponSlots = false;
+  try {
+    canUseWeaponSlots = Boolean(
+      adapter.filterItems([item], "Правая рука", 0)?.length
+      || adapter.filterItems([item], "Левая рука", 0)?.length
+    );
+  } catch (_) {
+    canUseWeaponSlots = false;
+  }
+
+  if (canUseWeaponSlots) {
+    root.querySelectorAll(".cis-weapon-slot").forEach((slotElement) => {
+      slotElement.classList.add("cis-slot-compatible");
+    });
+  }
+}
+
 function createPaperDollAdapter(sheet) {
   const proto = getPaperDollProto();
   if (!proto) return null;
@@ -416,6 +495,7 @@ Hooks.once("init", () => {
       applyCellInventory(this, html);
       this.#activateGearSlots(html);
       this.#activateWeaponSets(html);
+      this.#activateDragHighlights(html);
 
       html.find('[data-action="header-button"]').on("click", (event) => {
         event.preventDefault();
@@ -423,6 +503,31 @@ Hooks.once("init", () => {
         const button = this._cisHeaderButtons?.find((candidate) => candidate._cisId === buttonId);
         if (typeof button?.onclick === "function") button.onclick(event);
       });
+    }
+
+    #activateDragHighlights(html) {
+      const root = html?.[0] ?? html;
+      if (!root) return;
+
+      const beginHighlight = (event) => {
+        const item = resolveDraggedSheetItem(this, event);
+        if (!item) {
+          clearCompatibleSlotHighlights(root);
+          return;
+        }
+
+        globalThis.requestAnimationFrame(() => {
+          applyCompatibleSlotHighlights(root, this, item);
+        });
+      };
+
+      const endHighlight = () => {
+        clearCompatibleSlotHighlights(root);
+      };
+
+      root.addEventListener("dragstart", beginHighlight, true);
+      root.addEventListener("dragend", endHighlight, true);
+      root.addEventListener("drop", endHighlight, true);
     }
 
     #activateGearSlots(html) {

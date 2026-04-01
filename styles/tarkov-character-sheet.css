@@ -400,6 +400,18 @@
   box-shadow: 0 0 0 1px rgba(201, 106, 57, 0.28), 0 0 14px rgba(201, 106, 57, 0.25);
 }
 
+.cis-gear-slot.cis-slot-compatible {
+  border-color: rgba(228, 205, 144, 0.52);
+  background:
+    linear-gradient(180deg, rgba(228, 205, 144, 0.12), rgba(228, 205, 144, 0.08)),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
+    linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
+  box-shadow:
+    inset 0 0 18px rgba(228, 205, 144, 0.12),
+    0 0 0 1px rgba(228, 205, 144, 0.22),
+    0 0 18px rgba(228, 205, 144, 0.18);
+}
+
 .cis-gear-slot.is-empty::after {
   content: "";
   position: absolute;
@@ -539,6 +551,18 @@
 .cis-weapon-slot.drag-over {
   border-color: var(--cis-warning);
   box-shadow: 0 0 0 1px rgba(201, 106, 57, 0.28), 0 0 14px rgba(201, 106, 57, 0.25);
+}
+
+.cis-weapon-slot.cis-slot-compatible {
+  border-color: rgba(228, 205, 144, 0.52);
+  background:
+    linear-gradient(180deg, rgba(228, 205, 144, 0.12), rgba(228, 205, 144, 0.08)),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.03) 0 5px, transparent 5px 10px),
+    linear-gradient(180deg, rgba(26, 29, 38, 0.94), rgba(8, 10, 15, 0.96));
+  box-shadow:
+    inset 0 0 18px rgba(228, 205, 144, 0.12),
+    0 0 0 1px rgba(228, 205, 144, 0.22),
+    0 0 18px rgba(228, 205, 144, 0.18);
 }
 
 .cis-weapon-slot.is-empty::after {
